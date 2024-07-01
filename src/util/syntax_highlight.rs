@@ -51,12 +51,12 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
     }
 
     fn new_line(&mut self) -> Result<(), Error> {
-        self.write_text("<br/>")?;
         if !self.current_text.is_empty() {
             self.write_span_for(HighlightToken::Text, &self.current_text.clone())?;
             self.current_text = String::new();
         }
 
+        self.write("<br/>")?;
         self.position.new_line();
         Ok(())
     }
@@ -83,7 +83,7 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
 
     fn write_nontext(&mut self, token: HighlightToken, out: &str) -> Result<(), Error> {
         if !self.current_text.is_empty() {
-            self.write_span_for(HighlightToken::Text, out)?;
+            self.write_span_for(HighlightToken::Text, &self.current_text.clone())?;
             self.current_text = String::new();
         }
 
@@ -236,5 +236,9 @@ impl<'out, T: WriterOutput> Writer<'out, T> for HighlightedWriter<'out, T> {
         };
 
         self.write_nontext(HighlightToken::Operator, text)
+    }
+
+    fn write_value(&mut self, val: &str) -> Result<(), Error> {
+        self.write_direct(val)
     }
 }

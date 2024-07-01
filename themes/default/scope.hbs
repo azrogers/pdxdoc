@@ -1,0 +1,15 @@
+{{#> layout}}
+	{{{ body }}}
+
+	{{#with cross_refs}}
+		<div class="cross-refs">
+			{{#each groups}}
+				<h4>{{name}}</h4>
+				{{#each properties}}
+					<h5>{{ name }}</h5>
+					<p>{{{ body }}}</p>
+				{{/each}}
+			{{/each}}
+		</div>
+	{{/with}}
+{{/layout}}

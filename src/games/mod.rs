@@ -3,6 +3,7 @@ use std::{fs, path::Path};
 use clauser::data::script_doc_parser::ScriptDocParserResult;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use serde::Serialize;
 use victoria3::Victoria3GameDocProvider;
 
 use crate::{
@@ -14,11 +15,12 @@ use crate::{
 mod victoria3;
 
 /// Version information about a game.
+#[derive(Serialize)]
 pub struct GameVersion {
     /// The version number string for this release, like "1.7.1"
-    version_number: String,
+    pub version_number: String,
     /// A detailed version string
-    detailed: String,
+    pub detailed: String,
 }
 
 pub trait GameDocProvider {

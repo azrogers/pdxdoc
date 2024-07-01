@@ -1,0 +1,27 @@
+{{#> layout}}
+	{{{ body }}}
+
+	{{#each entries}}
+		<h3>{{ name }}</h3>
+		{{#if body}}<p>{{{ body }}}</p>{{/if}}
+		<table>
+			{{#each properties }}
+			<tr>
+				<td>{{ name }}</td>
+				<td>{{{ value }}}</td>
+			</tr>
+			{{/each}}
+		</table>
+		{{#with cross_refs}}
+			<div class="cross-refs">
+				{{#each groups}}
+					<h4>{{name}}</h4>
+					{{#each properties}}
+						<h5>{{ name }}</h5>
+						<p>{{{body}}}</p>
+					{{/each}}
+				{{/each}}
+			</div>
+		{{/with}}
+	{{/each}}
+{{/layout}}

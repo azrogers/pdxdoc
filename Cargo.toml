@@ -7,8 +7,11 @@ edition = "2021"
 clauser = { path = "../../lib/clauser" }
 colog = "1.3.0"
 handlebars = "5.1.2"
+itertools = "0.13.0"
 log = "0.4.22"
 once_cell = "1.19.0"
+pathdiff = { git = "https://github.com/Manishearth/pathdiff.git" }
 regex = "1.10.5"
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = { version = "1.0.118", features = ["raw_value"] }
+# vic3save = { git = "https://github.com/pdx-tools/pdx-tools.git" } (must use AGPL to include)

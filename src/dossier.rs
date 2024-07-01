@@ -1,8 +1,10 @@
 use std::{
+    any::Any,
     cell::RefCell,
     collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
     rc::Rc,
+    thread::Scope,
 };
 
 use clauser::{
@@ -19,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::Error,
     games::GameVersion,
-    page::{CategoryListPage, Page, PageContext},
+    page::{CategoryListPage, Page, PageContext, ScopePage},
     util::{self, humanize_camel_case, DocStringSer},
 };
 
@@ -27,7 +29,17 @@ pub trait DocEntryContext {
     fn resolve_str(&self, id: &usize) -> &str;
 }
 
-pub trait DocEntry {
+pub trait AsAny: 'static {
+    fn as_any(&self) -> &dyn Any;
+}
+
+impl<T: 'static> AsAny for T {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+pub trait DocEntry: AsAny {
     fn id(&self) -> u64;
     fn category_id(&self) -> u64;
     fn name(&self) -> &str;
@@ -137,7 +149,7 @@ impl DocEntry for ScriptDocEntry {
                 vec![
                     (
                         "Scope".into(),
-                        dossier.link_for_scope(context, scope).into(),
+                        dossier.link_for_scope(context, self, scope).into(),
                     ),
                     ("Random Valid?".into(), (*random_valid).into()),
                     ("Entries".into(), entries.join("\n").into()),
@@ -153,7 +165,7 @@ impl DocEntry for ScriptDocEntry {
                     DocString::new_from_iter(
                         supported_scopes
                             .iter()
-                            .map(|s| dossier.link_for_scope(context, s)),
+                            .map(|s| dossier.link_for_scope(context, self, s)),
                         Some(", "),
                     ),
                 ),
@@ -162,7 +174,7 @@ impl DocEntry for ScriptDocEntry {
                     DocString::new_from_iter(
                         supported_targets
                             .iter()
-                            .map(|s| dossier.link_for_target(context, s)),
+                            .map(|s| dossier.link_for_scope(context, self, s)),
                         Some(", "),
                     ),
                 ),
@@ -183,7 +195,7 @@ impl DocEntry for ScriptDocEntry {
                     DocString::new_from_iter(
                         input_scopes
                             .iter()
-                            .map(|s| dossier.link_for_scope(context, s)),
+                            .map(|s| dossier.link_for_scope(context, self, s)),
                         Some(", "),
                     ),
                 ),
@@ -192,7 +204,7 @@ impl DocEntry for ScriptDocEntry {
                     DocString::new_from_iter(
                         output_scopes
                             .iter()
-                            .map(|s| dossier.link_for_scope(context, s)),
+                            .map(|s| dossier.link_for_scope(context, self, s)),
                         Some(", "),
                     ),
                 ),
@@ -205,7 +217,10 @@ impl DocEntry for ScriptDocEntry {
                     properties.push(("Display Name".into(), display_name.clone()));
                 }
 
-                properties.push(("Mask".into(), dossier.link_for_scope(context, mask).into()));
+                properties.push((
+                    "Mask".into(),
+                    dossier.link_for_scope(context, self, mask).into(),
+                ));
                 properties
             }
             ScriptDocContent::OnActions {
@@ -214,7 +229,7 @@ impl DocEntry for ScriptDocEntry {
             } => vec![
                 (
                     "Expected Scope".into(),
-                    dossier.link_for_scope(context, expected_scope).into(),
+                    dossier.link_for_scope(context, self, expected_scope).into(),
                 ),
                 ("From Code".into(), (*from_code).into()),
             ],
@@ -228,7 +243,7 @@ impl DocEntry for ScriptDocEntry {
                     DocString::new_from_iter(
                         supported_scopes
                             .iter()
-                            .map(|s| dossier.link_for_scope(context, s)),
+                            .map(|s| dossier.link_for_scope(context, self, s)),
                         Some(", "),
                     ),
                 ),
@@ -237,7 +252,7 @@ impl DocEntry for ScriptDocEntry {
                     DocString::new_from_iter(
                         supported_targets
                             .iter()
-                            .map(|s| dossier.link_for_target(context, s)),
+                            .map(|s| dossier.link_for_scope(context, self, s)),
                         Some(", "),
                     ),
                 ),
@@ -247,10 +262,11 @@ impl DocEntry for ScriptDocEntry {
 }
 
 // scopes is a special synthesized category
+#[derive(Debug, Hash, Clone)]
 pub struct ScopeDocEntry {
-    id: u64,
-    name: String,
-    display_name: String,
+    pub id: u64,
+    pub name: String,
+    pub display_name: String,
 }
 
 impl ScopeDocEntry {
@@ -293,7 +309,7 @@ impl DocEntry for ScopeDocEntry {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Hash)]
 pub struct DocCategory {
     id: u64,
     pub name: String,
@@ -339,14 +355,21 @@ pub struct CrossReference {
 }
 
 #[derive(Serialize)]
+pub struct CrossReferenceSection {
+    name: String,
+    body: DocStringSer,
+}
+
+#[derive(Serialize)]
 pub struct CrossReferenceGroup {
-    properties: Vec<(String, DocStringSer)>,
+    name: String,
+    properties: Vec<CrossReferenceSection>,
 }
 
 /// A set of cross references for a single item
 #[derive(Serialize)]
 pub struct CollatedCrossReferences {
-    groups: Vec<(String, CrossReferenceGroup)>,
+    groups: Vec<CrossReferenceGroup>,
 }
 
 /// The sum of information we've collected that we're trying to render into a set of documents.
@@ -415,6 +438,11 @@ impl Dossier {
             )));
         }
 
+        for id in &dossier.scopes {
+            let entry = dossier.entry_as::<ScopeDocEntry>(*id);
+            pages.push(Box::new(ScopePage::new(entry.clone(), dossier.clone())));
+        }
+
         pages
     }
 
@@ -423,6 +451,8 @@ impl Dossier {
         context: &PageContext,
         item: u64,
     ) -> CollatedCrossReferences {
+        let entry = dossier.entries.get(&item).unwrap();
+
         let mut groups = HashMap::new();
         for CrossReference {
             ref from_id,
@@ -430,18 +460,14 @@ impl Dossier {
             ref to_id,
         } in dossier.cross_references.iter().filter(|c| c.to_id == item)
         {
-            let other = dossier.entries.get(from_id).unwrap();
-            let group_name = &dossier
-                .categories
-                .get(&other.category_id())
-                .unwrap()
-                .display_name;
-
-            let group = groups.entry(group_name).or_insert_with(|| HashMap::new());
-
-            let prop_name = util::humanize_camel_case(&from_property);
-            let property = group.entry(prop_name).or_insert_with(|| Vec::new());
-            property.push(dossier.link_for_entry(context, other.name(), &other.id()));
+            Dossier::add_ref_link(
+                dossier.clone(),
+                context,
+                &mut groups,
+                entry.as_ref(),
+                *from_id,
+                from_property,
+            );
         }
 
         let mut collated = CollatedCrossReferences { groups: Vec::new() };
@@ -454,37 +480,80 @@ impl Dossier {
             let mut property_names: Vec<String> = group.keys().map(|k| (*k).clone()).collect();
             property_names.sort();
 
-            let mut properties: Vec<(String, DocStringSer)> = Vec::new();
+            let mut properties = Vec::new();
             for prop in property_names.drain(..) {
                 let mut items = group.remove(&prop).unwrap();
                 items.sort();
                 let s = DocString::new_from_iter(items.drain(..), Some(", "));
-                properties.push((prop, DocStringSer(s, dossier.clone())));
+                properties.push(CrossReferenceSection {
+                    name: prop,
+                    body: DocStringSer(s, dossier.clone()),
+                });
             }
 
             collated
                 .groups
-                .push((name, CrossReferenceGroup { properties }));
+                .push(CrossReferenceGroup { name, properties });
         }
 
         collated
     }
 
-    fn link_for_scope(&self, context: &PageContext, scope: &usize) -> DocStringSegment {
+    fn add_ref_link(
+        dossier: Rc<Dossier>,
+        context: &PageContext,
+        groups: &mut HashMap<String, HashMap<String, Vec<DocStringSegment>>>,
+        entry: &dyn DocEntry,
+        other_id: u64,
+        prop: &str,
+    ) {
+        let other = dossier.entries.get(&other_id).unwrap();
+        let group_name = &dossier
+            .categories
+            .get(&other.category_id())
+            .unwrap()
+            .display_name;
+
+        let group = groups
+            .entry(group_name.clone())
+            .or_insert_with(|| HashMap::new());
+
+        let prop_name = util::humanize_camel_case(&prop);
+        let property = group.entry(prop_name).or_insert_with(|| Vec::new());
+        property.push(dossier.link_for_entry(context, entry, other.name(), &other.id()));
+    }
+
+    fn link_for_scope(
+        &self,
+        context: &PageContext,
+        from: &dyn DocEntry,
+        scope: &usize,
+    ) -> DocStringSegment {
         let scope = self.string_table.get(*scope).unwrap();
         let id = ScopeDocEntry::id_from_name(&scope);
-        self.link_for_entry(context, &scope, &id)
+        self.link_for_entry(context, from, &scope, &id)
     }
 
-    fn link_for_target(&self, context: &PageContext, entry: &usize) -> DocStringSegment {
+    fn link_for_target(
+        &self,
+        context: &PageContext,
+        from: &dyn DocEntry,
+        entry: &usize,
+    ) -> DocStringSegment {
         let entry = self.string_table.get(*entry).unwrap();
         let id = ScriptDocEntry::id_for_name(&ScriptDocCategory::EventTargets, &entry);
-        self.link_for_entry(context, &entry, &id)
+        self.link_for_entry(context, from, &entry, &id)
     }
 
-    fn link_for_entry(&self, context: &PageContext, name: &str, id: &u64) -> DocStringSegment {
+    fn link_for_entry(
+        &self,
+        context: &PageContext,
+        from: &dyn DocEntry,
+        name: &str,
+        id: &u64,
+    ) -> DocStringSegment {
         if let Some(entry) = self.entries.get(&id) {
-            let url = context.url_for_entry(entry.as_ref());
+            let url = context.url_for_entry(from, entry.as_ref());
             return DocStringSegment::Link {
                 contents: name.to_owned(),
                 url: url,
@@ -522,5 +591,15 @@ impl Dossier {
             from_property: prop.to_owned(),
             to_id: that_id,
         });
+    }
+
+    fn entry_as<T: 'static>(&self, id: u64) -> &T {
+        self.entries
+            .get(&id)
+            .unwrap()
+            .as_ref()
+            .as_any()
+            .downcast_ref::<T>()
+            .unwrap()
     }
 }

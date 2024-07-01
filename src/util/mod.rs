@@ -1,4 +1,5 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use clauser::data::script_doc_parser::doc_string::{DocString, DocStringSegment};

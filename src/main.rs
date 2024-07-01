@@ -6,6 +6,8 @@ use dossier::{DocInfo, Dossier};
 use error::Error;
 use games::GameDocProvider;
 use generator::SiteGenerator;
+use log::info;
+use theme::DefaultTheme;
 
 mod config;
 mod dossier;
@@ -13,11 +15,20 @@ mod error;
 mod games;
 mod generator;
 mod page;
+mod theme;
 mod util;
 
 fn process_profile(profile: &Profile) -> Result<Dossier, Error> {
+    info!("processing profile {}", profile.name);
+
     let provider = games::provider_for_game(&profile.game);
     let version = provider.read_version_info(&profile)?;
+    info!(
+        "found {:?} version {}",
+        profile.game, version.version_number
+    );
+
+    info!("parsing script docs");
     let mut script_docs = provider.read_script_docs(&profile)?;
 
     let scopes = match script_docs {
@@ -43,6 +54,7 @@ fn process_profile(profile: &Profile) -> Result<Dossier, Error> {
     );
 
     dossier.add_entries(entries.into_iter())?;
+    info!("collected {} entries", dossier.entries.len());
 
     Ok(dossier)
 }
@@ -52,11 +64,13 @@ fn main() -> Result<(), Error> {
 
     let config = Config::create(&PathBuf::from("config.json"))?;
 
-    let mut generator = SiteGenerator::new();
+    let mut generator = SiteGenerator::new(&config);
     for profile in &config.profiles {
         let dossier = process_profile(profile)?;
         generator.add_profile(profile.clone(), dossier);
     }
+
+    generator.generate(&DefaultTheme::new())?;
 
     Ok(())
 }
