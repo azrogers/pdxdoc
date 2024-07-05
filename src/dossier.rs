@@ -1,313 +1,21 @@
-use std::{
-    any::Any,
-    cell::RefCell,
-    collections::HashMap,
-    hash::{DefaultHasher, Hash, Hasher},
-    rc::Rc,
-    thread::Scope,
-};
+use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
 
+use anyhow::{Error, Result};
 use clauser::{
-    data::script_doc_parser::{
-        doc_string::{DocString, DocStringSegment},
-        ScriptDocCategory, ScriptDocContent, ScriptDocEntry,
-    },
+    data::script_doc_parser::doc_string::{DocString, DocStringSegment},
     string_table::StringTable,
 };
 use log::warn;
-use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::{
-    error::Error,
+    config::Profile,
+    entry::{DocEntry, ScopeDocEntry},
     games::GameVersion,
+    generator::SiteMapper,
     page::{CategoryListPage, Page, PageContext, ScopePage},
-    util::{self, humanize_camel_case, DocStringSer},
+    util::{self, DocStringSer},
 };
-
-pub trait DocEntryContext {
-    fn resolve_str(&self, id: &usize) -> &str;
-}
-
-pub trait AsAny: 'static {
-    fn as_any(&self) -> &dyn Any;
-}
-
-impl<T: 'static> AsAny for T {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-pub trait DocEntry: AsAny {
-    fn id(&self) -> u64;
-    fn category_id(&self) -> u64;
-    fn name(&self) -> &str;
-    fn record_cross_references(&self, dossier: &mut Dossier);
-    fn body(&self) -> Option<DocString>;
-    fn properties(&self, context: &PageContext, dossier: &Dossier) -> Vec<(String, DocString)>;
-}
-
-impl DocEntry for ScriptDocEntry {
-    fn id(&self) -> u64 {
-        self.id
-    }
-
-    fn category_id(&self) -> u64 {
-        util::hash(&self.category)
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn body(&self) -> Option<DocString> {
-        let content = self.content.as_ref()?;
-        match content {
-            ScriptDocContent::CustomLocalization { .. } => None,
-            ScriptDocContent::Effects { description, .. } => Some(description.clone()),
-            ScriptDocContent::EventTargets { description, .. } => Some(description.clone()),
-            ScriptDocContent::Modifiers { description, .. } => description.clone(),
-            ScriptDocContent::OnActions { .. } => None,
-            ScriptDocContent::Triggers { description, .. } => Some(description.clone()),
-        }
-    }
-
-    fn record_cross_references(&self, dossier: &mut Dossier) {
-        let content = self.content.as_ref();
-        if content.is_none() {
-            return;
-        }
-
-        let content = content.unwrap();
-
-        match content {
-            ScriptDocContent::CustomLocalization { scope, .. } => {
-                dossier.add_scope_reference("Scope", self.id, *scope);
-            }
-            ScriptDocContent::Effects {
-                supported_scopes,
-                supported_targets,
-                ..
-            } => {
-                for s in supported_scopes {
-                    dossier.add_scope_reference("Supported Scopes", self.id, *s);
-                }
-
-                for s in supported_targets {
-                    dossier.add_target_reference("Supported Targets", self.id, *s);
-                }
-            }
-            ScriptDocContent::EventTargets {
-                input_scopes,
-                output_scopes,
-                ..
-            } => {
-                for s in input_scopes {
-                    dossier.add_scope_reference("Input Scopes", self.id, *s);
-                }
-
-                for s in output_scopes {
-                    dossier.add_scope_reference("Output Scopes", self.id, *s);
-                }
-            }
-            ScriptDocContent::Modifiers { mask, .. } => {
-                dossier.add_scope_reference("Mask", self.id, *mask);
-            }
-            ScriptDocContent::OnActions { expected_scope, .. } => {
-                dossier.add_scope_reference("Expected Scope", self.id, *expected_scope)
-            }
-            ScriptDocContent::Triggers {
-                supported_scopes,
-                supported_targets,
-                ..
-            } => {
-                for s in supported_scopes {
-                    dossier.add_scope_reference("Supported Scopes", self.id, *s);
-                }
-
-                for s in supported_targets {
-                    dossier.add_target_reference("Supported Targets", self.id, *s);
-                }
-            }
-        }
-    }
-
-    fn properties(&self, context: &PageContext, dossier: &Dossier) -> Vec<(String, DocString)> {
-        let content = self.content.as_ref();
-        if content.is_none() {
-            return vec![];
-        }
-        let content = content.unwrap();
-
-        match content {
-            ScriptDocContent::CustomLocalization {
-                scope,
-                random_valid,
-                entries,
-            } => {
-                vec![
-                    (
-                        "Scope".into(),
-                        dossier.link_for_scope(context, self, scope).into(),
-                    ),
-                    ("Random Valid?".into(), (*random_valid).into()),
-                    ("Entries".into(), entries.join("\n").into()),
-                ]
-            }
-            ScriptDocContent::Effects {
-                supported_scopes,
-                supported_targets,
-                ..
-            } => vec![
-                (
-                    "Supported Scopes".into(),
-                    DocString::new_from_iter(
-                        supported_scopes
-                            .iter()
-                            .map(|s| dossier.link_for_scope(context, self, s)),
-                        Some(", "),
-                    ),
-                ),
-                (
-                    "Supported Targets".into(),
-                    DocString::new_from_iter(
-                        supported_targets
-                            .iter()
-                            .map(|s| dossier.link_for_scope(context, self, s)),
-                        Some(", "),
-                    ),
-                ),
-            ],
-            ScriptDocContent::EventTargets {
-                requires_data,
-                wild_card,
-                global_link,
-                input_scopes,
-                output_scopes,
-                ..
-            } => vec![
-                ("Requires Data".into(), (*requires_data).into()),
-                ("Wild Card".into(), (*wild_card).into()),
-                ("Global Link".into(), (*global_link).into()),
-                (
-                    "Input Scopes".into(),
-                    DocString::new_from_iter(
-                        input_scopes
-                            .iter()
-                            .map(|s| dossier.link_for_scope(context, self, s)),
-                        Some(", "),
-                    ),
-                ),
-                (
-                    "Output Scopes".into(),
-                    DocString::new_from_iter(
-                        output_scopes
-                            .iter()
-                            .map(|s| dossier.link_for_scope(context, self, s)),
-                        Some(", "),
-                    ),
-                ),
-            ],
-            ScriptDocContent::Modifiers {
-                display_name, mask, ..
-            } => {
-                let mut properties = Vec::new();
-                if let Some(display_name) = display_name {
-                    properties.push(("Display Name".into(), display_name.clone()));
-                }
-
-                properties.push((
-                    "Mask".into(),
-                    dossier.link_for_scope(context, self, mask).into(),
-                ));
-                properties
-            }
-            ScriptDocContent::OnActions {
-                from_code,
-                expected_scope,
-            } => vec![
-                (
-                    "Expected Scope".into(),
-                    dossier.link_for_scope(context, self, expected_scope).into(),
-                ),
-                ("From Code".into(), (*from_code).into()),
-            ],
-            ScriptDocContent::Triggers {
-                supported_scopes,
-                supported_targets,
-                ..
-            } => vec![
-                (
-                    "Supported Scopes".into(),
-                    DocString::new_from_iter(
-                        supported_scopes
-                            .iter()
-                            .map(|s| dossier.link_for_scope(context, self, s)),
-                        Some(", "),
-                    ),
-                ),
-                (
-                    "Supported Targets".into(),
-                    DocString::new_from_iter(
-                        supported_targets
-                            .iter()
-                            .map(|s| dossier.link_for_scope(context, self, s)),
-                        Some(", "),
-                    ),
-                ),
-            ],
-        }
-    }
-}
-
-// scopes is a special synthesized category
-#[derive(Debug, Hash, Clone)]
-pub struct ScopeDocEntry {
-    pub id: u64,
-    pub name: String,
-    pub display_name: String,
-}
-
-impl ScopeDocEntry {
-    pub fn new(name: String) -> ScopeDocEntry {
-        ScopeDocEntry {
-            id: ScopeDocEntry::id_from_name(&name),
-            display_name: humanize_camel_case(&name),
-            name,
-        }
-    }
-
-    pub fn id_from_name(name: &str) -> u64 {
-        util::hash(&format!("scope_{}", name))
-    }
-}
-
-static SCOPES_CATEGORY: Lazy<u64> = Lazy::new(|| util::hash(&"scopes"));
-
-impl DocEntry for ScopeDocEntry {
-    fn id(&self) -> u64 {
-        self.id
-    }
-
-    fn category_id(&self) -> u64 {
-        *SCOPES_CATEGORY
-    }
-
-    fn record_cross_references(&self, _dossier: &mut Dossier) {}
-
-    fn body(&self) -> Option<DocString> {
-        None
-    }
-
-    fn properties(&self, context: &PageContext, dossier: &Dossier) -> Vec<(String, DocString)> {
-        vec![]
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-}
 
 #[derive(Clone, Hash)]
 pub struct DocCategory {
@@ -378,6 +86,7 @@ pub struct Dossier {
     pub entries: HashMap<u64, Box<dyn DocEntry>>,
     scopes: Vec<u64>,
     string_table: StringTable,
+    mapper: Rc<RefCell<SiteMapper>>,
 
     cross_references: Vec<CrossReference>,
     info: DocInfo,
@@ -385,10 +94,12 @@ pub struct Dossier {
 
 impl Dossier {
     pub fn new(
+        profile: &Profile,
         categories: impl IntoIterator<Item = DocCategory>,
         scopes: impl IntoIterator<Item = String>,
         string_table: StringTable,
         info: DocInfo,
+        mapper: Rc<RefCell<SiteMapper>>,
     ) -> Dossier {
         let mut entries: HashMap<u64, Box<dyn DocEntry>> = HashMap::new();
         let mut scope_ids = Vec::new();
@@ -405,18 +116,19 @@ impl Dossier {
             cross_references: Vec::new(),
             scopes: scope_ids,
             string_table,
+            mapper,
         }
     }
 
-    pub fn add_entries<T>(&mut self, entries: impl Iterator<Item = T>) -> Result<(), Error>
+    pub fn add_entries<T>(&mut self, entries: impl Iterator<Item = T>) -> Result<()>
     where
         T: DocEntry + 'static,
     {
         for entry in entries {
             match self.categories.get_mut(&entry.category_id()) {
                 Some(category) => Ok(category.entries.push(entry.id())),
-                None => Err(Error::Other(
-                    "Tried adding an entry with a category that doesn't exist?".into(),
+                None => Err(Error::msg(
+                    "Tried adding an entry with a category that doesn't exist?",
                 )),
             }?;
 
@@ -449,6 +161,7 @@ impl Dossier {
     pub fn collate_references(
         dossier: Rc<Dossier>,
         context: &PageContext,
+        page_id: u64,
         item: u64,
     ) -> CollatedCrossReferences {
         let entry = dossier.entries.get(&item).unwrap();
@@ -487,7 +200,7 @@ impl Dossier {
                 let s = DocString::new_from_iter(items.drain(..), Some(", "));
                 properties.push(CrossReferenceSection {
                     name: prop,
-                    body: DocStringSer(s, dossier.clone()),
+                    body: DocStringSer(s, page_id, dossier.mapper.clone()),
                 });
             }
 
@@ -499,7 +212,7 @@ impl Dossier {
         collated
     }
 
-    fn add_ref_link(
+    pub fn add_ref_link(
         dossier: Rc<Dossier>,
         context: &PageContext,
         groups: &mut HashMap<String, HashMap<String, Vec<DocStringSegment>>>,
@@ -523,7 +236,7 @@ impl Dossier {
         property.push(dossier.link_for_entry(context, entry, other.name(), &other.id()));
     }
 
-    fn link_for_scope(
+    pub fn link_for_scope(
         &self,
         context: &PageContext,
         from: &dyn DocEntry,
@@ -532,17 +245,6 @@ impl Dossier {
         let scope = self.string_table.get(*scope).unwrap();
         let id = ScopeDocEntry::id_from_name(&scope);
         self.link_for_entry(context, from, &scope, &id)
-    }
-
-    fn link_for_target(
-        &self,
-        context: &PageContext,
-        from: &dyn DocEntry,
-        entry: &usize,
-    ) -> DocStringSegment {
-        let entry = self.string_table.get(*entry).unwrap();
-        let id = ScriptDocEntry::id_for_name(&ScriptDocCategory::EventTargets, &entry);
-        self.link_for_entry(context, from, &entry, &id)
     }
 
     fn link_for_entry(
@@ -566,22 +268,11 @@ impl Dossier {
         }
     }
 
-    fn add_scope_reference(&mut self, prop: &str, this_id: u64, scope: usize) {
+    pub fn add_scope_reference(&mut self, prop: &str, this_id: u64, scope: usize) {
         self.add_reference(
             &prop,
             this_id,
             ScopeDocEntry::id_from_name(&self.string_table.get(scope).unwrap()),
-        );
-    }
-
-    fn add_target_reference(&mut self, prop: &str, this_id: u64, scope: usize) {
-        self.add_reference(
-            &prop,
-            this_id,
-            ScriptDocEntry::id_for_name(
-                &ScriptDocCategory::EventTargets,
-                &self.string_table.get(scope).unwrap(),
-            ),
         );
     }
 

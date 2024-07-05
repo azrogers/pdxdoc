@@ -1,16 +1,18 @@
-use std::path::PathBuf;
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
+use anyhow::Result;
 use clauser::string_table::StringTable;
 use config::{Config, Profile, ProfileGame};
 use dossier::{DocInfo, Dossier};
 use error::Error;
 use games::GameDocProvider;
-use generator::SiteGenerator;
+use generator::{SiteGenerator, SiteMapper};
 use log::info;
 use theme::DefaultTheme;
 
 mod config;
 mod dossier;
+mod entry;
 mod error;
 mod games;
 mod generator;
@@ -18,7 +20,7 @@ mod page;
 mod theme;
 mod util;
 
-fn process_profile(profile: &Profile) -> Result<Dossier, Error> {
+fn process_profile(profile: &Profile, mapper: Rc<RefCell<SiteMapper>>) -> Result<Dossier> {
     info!("processing profile {}", profile.name);
 
     let provider = games::provider_for_game(&profile.game);
@@ -47,10 +49,12 @@ fn process_profile(profile: &Profile) -> Result<Dossier, Error> {
     };
 
     let mut dossier = Dossier::new(
+        profile,
         provider.get_categories(&profile)?,
         scopes,
         string_table,
         DocInfo::new(version),
+        mapper,
     );
 
     dossier.add_entries(entries.into_iter())?;
@@ -59,14 +63,14 @@ fn process_profile(profile: &Profile) -> Result<Dossier, Error> {
     Ok(dossier)
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<()> {
     colog::init();
 
     let config = Config::create(&PathBuf::from("config.json"))?;
 
     let mut generator = SiteGenerator::new(&config);
     for profile in &config.profiles {
-        let dossier = process_profile(profile)?;
+        let dossier = process_profile(profile, generator.mapper.clone())?;
         generator.add_profile(profile.clone(), dossier);
     }
 

@@ -29,6 +29,7 @@ enum HighlightToken {
     Number,
     Placeholder,
     Operator,
+    Comment,
 }
 
 struct HighlightFrame {
@@ -39,9 +40,10 @@ struct HighlightFrame {
 struct HighlightedWriter<'out, T: WriterOutput> {
     output: &'out mut T,
     frames: Vec<HighlightFrame>,
-    depth: usize,
+    depth: i64,
     position: TextPosition,
     current_text: String,
+    started: bool,
 }
 
 impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
@@ -52,8 +54,9 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
 
     fn new_line(&mut self) -> Result<(), Error> {
         if !self.current_text.is_empty() {
-            self.write_span_for(HighlightToken::Text, &self.current_text.clone())?;
+            let next: String = self.current_text.drain(..).collect();
             self.current_text = String::new();
+            self.write_span_for(HighlightToken::Text, &next)?;
         }
 
         self.write("<br/>")?;
@@ -62,12 +65,24 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
     }
 
     fn indent(&mut self) -> Result<(), Error> {
-        self.write_text(&iter::repeat('\t').take(self.depth).collect::<String>())
+        if self.depth < 0 {
+            return Err(Error::new_contextless(
+                ErrorType::WriterError,
+                self.position.index,
+                "Tried to indent with negative depth!",
+            ));
+        }
+
+        self.write_text(
+            &iter::repeat(' ')
+                .take((self.depth * 4) as usize)
+                .collect::<String>(),
+        )
     }
 
     fn write_span_for(&mut self, token: HighlightToken, out: &str) -> Result<(), Error> {
         let text = format!(
-            "<span class=\"cltoken-{:?}\">{}</span> ",
+            "<span class=\"cltoken-{:?}\">{}</span>",
             token,
             handlebars::html_escape(out)
         );
@@ -83,12 +98,12 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
 
     fn write_nontext(&mut self, token: HighlightToken, out: &str) -> Result<(), Error> {
         if !self.current_text.is_empty() {
-            self.write_span_for(HighlightToken::Text, &self.current_text.clone())?;
+            let next: String = self.current_text.drain(..).collect();
             self.current_text = String::new();
+            self.write_span_for(HighlightToken::Text, &next)?;
         }
 
-        self.write_span_for(token, out)?;
-        self.write_text(" ")
+        self.write_span_for(token, out)
     }
 
     fn start_collection(
@@ -96,12 +111,14 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
         collection: CollectionType,
         same_line: bool,
     ) -> Result<(), Error> {
-        self.write_text("{ ")?;
+        if self.depth >= 0 {
+            self.write_text("{")?;
+        }
+
         if !same_line {
-            self.new_line();
-            self.indent();
             self.depth = self.depth + 1;
         }
+
         self.frames.push(HighlightFrame {
             collection,
             same_line,
@@ -116,15 +133,29 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
             "Tried to end collection that wasn't started!",
         ))?;
 
-        if frame.same_line {
-            self.write_text(" ")?;
-        } else {
-            self.indent()?;
+        if !frame.same_line {
+            self.depth -= 1;
+
+            self.new_line()?;
+            if self.depth >= 0 {
+                self.indent()?;
+            }
         }
 
-        self.write_text("}")?;
-        if !frame.same_line {
-            self.new_line()?;
+        if self.depth >= 0 {
+            self.write_text("}")?;
+        }
+
+        self.flush_text()?;
+
+        Ok(())
+    }
+
+    fn flush_text(&mut self) -> Result<(), Error> {
+        if !self.current_text.is_empty() {
+            let next: String = self.current_text.drain(..).collect();
+            self.current_text = String::new();
+            self.write_span_for(HighlightToken::Text, &next)?;
         }
 
         Ok(())
@@ -138,7 +169,8 @@ impl<'out, T: WriterOutput> Writer<'out, T> for HighlightedWriter<'out, T> {
             frames: Vec::new(),
             position: TextPosition::new(),
             current_text: String::new(),
-            depth: 0,
+            depth: -1,
+            started: false,
         }
     }
 
@@ -146,9 +178,8 @@ impl<'out, T: WriterOutput> Writer<'out, T> for HighlightedWriter<'out, T> {
         self.position.clone()
     }
 
-    fn begin_object(&mut self, length: Option<usize>) -> Result<(), Error> {
-        let same_line = length.and_then(|l| Some(l < 2)).unwrap_or(false);
-        self.start_collection(CollectionType::Object, same_line)
+    fn begin_object(&mut self, _: Option<usize>) -> Result<(), Error> {
+        self.start_collection(CollectionType::Object, false)
     }
 
     fn write_property<S: ValueString>(&mut self, key: &ObjectKey<S>) -> Result<(), Error> {
@@ -166,12 +197,14 @@ impl<'out, T: WriterOutput> Writer<'out, T> for HighlightedWriter<'out, T> {
             ));
         }
 
-        if !frame.same_line {
+        if !frame.same_line && self.started {
+            self.new_line()?;
             self.indent()?;
         }
 
+        self.started = true;
+
         self.write_object_key(key)?;
-        self.write_text(" ")?;
 
         Ok(())
     }
@@ -236,6 +269,12 @@ impl<'out, T: WriterOutput> Writer<'out, T> for HighlightedWriter<'out, T> {
         };
 
         self.write_nontext(HighlightToken::Operator, text)
+    }
+
+    fn write_comment(&mut self, comment: &str) -> Result<(), Error> {
+        self.write_nontext(HighlightToken::Comment, &format!("# {}", comment))?;
+        self.new_line()?;
+        self.indent()
     }
 
     fn write_value(&mut self, val: &str) -> Result<(), Error> {

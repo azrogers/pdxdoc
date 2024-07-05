@@ -1,5 +1,6 @@
 use std::{fs, path::Path};
 
+use anyhow::{Error, Result};
 use clauser::data::script_doc_parser::ScriptDocParserResult;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -9,7 +10,6 @@ use victoria3::Victoria3GameDocProvider;
 use crate::{
     config::{Profile, ProfileGame},
     dossier::DocCategory,
-    error::Error,
 };
 
 mod victoria3;
@@ -24,9 +24,9 @@ pub struct GameVersion {
 }
 
 pub trait GameDocProvider {
-    fn read_script_docs(&self, profile: &Profile) -> Result<Option<ScriptDocParserResult>, Error>;
-    fn read_version_info(&self, profile: &Profile) -> Result<GameVersion, Error>;
-    fn get_categories(&self, profile: &Profile) -> Result<Vec<DocCategory>, Error>;
+    fn read_script_docs(&self, profile: &Profile) -> Result<Option<ScriptDocParserResult>>;
+    fn read_version_info(&self, profile: &Profile) -> Result<GameVersion>;
+    fn get_categories(&self, profile: &Profile) -> Result<Vec<DocCategory>>;
 }
 
 pub fn provider_for_game(game: &ProfileGame) -> Box<impl GameDocProvider> {
@@ -51,7 +51,7 @@ impl BranchRevParser {
         );
 
         if game_rev.len() < 32 || cl_rev.len() < 32 {
-            return Err(Error::Provider(match cl_rev.len() < 32 {
+            return Err(Error::msg(match cl_rev.len() < 32 {
                 true => format!("invalid revision in clausewitz_rev.txt"),
                 false => format!("invalid revision in {}_rev.txt", prefix),
             }));
@@ -59,7 +59,7 @@ impl BranchRevParser {
 
         let version_number = match VERSION_REGEX.find(&game_branch) {
             Some(v) => Ok(v.as_str()),
-            None => Err(Error::Provider(format!(
+            None => Err(Error::msg(format!(
                 "can't get version number from {}_branch.txt",
                 prefix
             ))),

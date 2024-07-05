@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::Result;
 use clauser::data::script_doc_parser::{
     v3_parser::V3ScriptDocParser, ScriptDocCategory, ScriptDocParser, ScriptDocParserResult,
 };
@@ -18,7 +19,7 @@ use super::GameDocProvider;
 pub struct Victoria3GameDocProvider;
 
 impl GameDocProvider for Victoria3GameDocProvider {
-    fn read_script_docs(&self, profile: &Profile) -> Result<Option<ScriptDocParserResult>, Error> {
+    fn read_script_docs(&self, profile: &Profile) -> Result<Option<ScriptDocParserResult>> {
         let path = PathBuf::from(&profile.user_data_dir).join("docs");
         if !path.is_dir() {
             warn!(
@@ -32,11 +33,11 @@ impl GameDocProvider for Victoria3GameDocProvider {
         Ok(Some(parser))
     }
 
-    fn read_version_info(&self, profile: &Profile) -> Result<GameVersion, Error> {
+    fn read_version_info(&self, profile: &Profile) -> Result<GameVersion> {
         BranchRevParser::parse(&PathBuf::from(&profile.game_data_dir), "caligula")
     }
 
-    fn get_categories(&self, _profile: &Profile) -> Result<Vec<DocCategory>, Error> {
+    fn get_categories(&self, _profile: &Profile) -> Result<Vec<DocCategory>> {
         Ok(vec![
             DocCategory::new(
                 &ScriptDocCategory::CustomLocalization,

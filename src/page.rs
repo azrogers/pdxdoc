@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
 
 use clauser::data::script_doc_parser::doc_string::DocString;
 use serde::Serialize;
@@ -6,22 +6,25 @@ use serde_json::{value::RawValue, Value};
 
 use crate::{
     config::Config,
-    dossier::{CollatedCrossReferences, DocCategory, DocEntry, Dossier, ScopeDocEntry},
+    dossier::{CollatedCrossReferences, DocCategory, Dossier},
+    entry::{DocEntry, ScopeDocEntry},
     generator::SiteMapper,
     util::{self, DocStringSer},
 };
 
-pub struct PageContext<'sg, 'config> {
-    mapper: &'sg SiteMapper<'config>,
+pub struct PageContext {
+    mapper: Rc<RefCell<SiteMapper>>,
 }
 
-impl<'sg, 'config> PageContext<'sg, 'config> {
-    pub fn new(mapper: &'sg SiteMapper<'config>) -> PageContext<'sg, 'config> {
-        PageContext { mapper }
+impl PageContext {
+    pub fn new(mapper: Rc<RefCell<SiteMapper>>) -> PageContext {
+        PageContext {
+            mapper: mapper.clone(),
+        }
     }
 
     pub fn url_for_entry(&self, from: &dyn DocEntry, entry: &dyn DocEntry) -> String {
-        self.mapper.url_for_entry(from.id(), entry.id())
+        self.mapper.borrow().url_for_entry(from.id(), entry.id())
     }
 }
 
@@ -87,7 +90,7 @@ impl Page for CategoryListPage {
     }
 
     fn body(&self) -> DocString {
-        DocString::new_text("todo")
+        DocString::new_text("todo", None)
     }
 
     fn entries(&self) -> Vec<u64> {
@@ -119,25 +122,30 @@ impl Page for CategoryListPage {
         let mut entries = Vec::new();
         for entry in &self.entries {
             let entry = self.dossier.entries.get(&entry).unwrap();
-            let mut properties = entry.properties(context, &self.dossier);
+            let mut properties = entry.properties(context, self.dossier.clone());
             let body = entry.body();
             entries.push(Entry {
                 anchor: entry.name().to_owned(),
                 name: entry.name().to_owned(),
-                body: body.and_then(|d| Some(DocStringSer(d, self.dossier.clone()))),
+                body: body.and_then(|d| Some(DocStringSer(d, self.id(), context.mapper.clone()))),
                 properties: properties
                     .drain(..)
                     .map(|(name, val)| Property {
                         name,
-                        value: DocStringSer(val, self.dossier.clone()),
+                        value: DocStringSer(val, self.id(), context.mapper.clone()),
                     })
                     .collect(),
-                cross_refs: Dossier::collate_references(self.dossier.clone(), context, entry.id()),
+                cross_refs: Dossier::collate_references(
+                    self.dossier.clone(),
+                    context,
+                    self.id(),
+                    entry.id(),
+                ),
             });
         }
 
         serde_json::to_value(Data {
-            body: DocStringSer(DocString::new(), self.dossier.clone()),
+            body: DocStringSer(DocString::new(), self.id(), context.mapper.clone()),
             entries,
         })
         .unwrap()
@@ -190,7 +198,7 @@ impl Page for ScopePage {
     }
 
     fn body(&self) -> DocString {
-        DocString::new_text("todo")
+        DocString::new_text("todo", None)
     }
 
     fn anchors(&self) -> Vec<(u64, String)> {
@@ -198,7 +206,8 @@ impl Page for ScopePage {
     }
 
     fn data(&self, context: &PageContext) -> serde_json::Value {
-        let refs = Dossier::collate_references(self.dossier.clone(), context, self.entry.id);
+        let refs =
+            Dossier::collate_references(self.dossier.clone(), context, self.id(), self.entry.id);
 
         #[derive(Serialize)]
         struct Data {
