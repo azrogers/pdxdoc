@@ -1,0 +1,27 @@
+{{#pagination pagination 3 }}
+<div class="pd-pagination">
+	{{#if first_page}}
+		<div class="pd-pagination-first">
+			<a href="{{page_url first_page}}">{{first_page}}</a>
+		</div>
+	{{/if}}
+	<div class="pd-pagination-other pd-pagination-before">
+		{{#each pages_before}}
+			<a href="{{page_url this}}">{{this}}</a>
+		{{/each}}
+	</div>
+	<div class="pd-pagination-current">
+		<span>{{current_page}}</span>
+	</div>
+	<div class="pd-pagination-other pd-pagination-after">
+		{{#each pages_after}}
+			<a href="{{page_url this}}">{{this}}</a>
+		{{/each}}
+	</div>
+	{{#if last_page}}
+		<div class="pd-pagination-last">
+			<a href="{{page_url last_page}}">{{last_page}}</a>
+		</div>
+	{{/if}}
+</div>
+{{/pagination}}

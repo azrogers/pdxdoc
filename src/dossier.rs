@@ -5,15 +5,18 @@ use clauser::{
     data::script_doc_parser::doc_string::{DocString, DocStringSegment},
     string_table::StringTable,
 };
+use itertools::Itertools;
 use log::warn;
 use serde::Serialize;
 
 use crate::{
     config::{Config, Profile},
-    entry::{DocEntry, ScopeDocEntry},
+    entry::DocEntry,
     games::GameVersion,
     generator::SiteMapper,
-    page::{CategoryListPage, Page, PageContext, ScopePage},
+    page::{
+        CategoryListPage, GenericListPage, MaskPage, Page, PageBuilder, PageContext, ScopePage,
+    },
     util::{self, paginate, DocStringSer},
 };
 
@@ -65,7 +68,7 @@ pub struct CrossReference {
 #[derive(Serialize)]
 pub struct CrossReferenceSection {
     name: String,
-    body: DocStringSer,
+    items: Vec<DocStringSer>,
 }
 
 #[derive(Serialize)]
@@ -81,12 +84,14 @@ pub struct CollatedCrossReferences {
 }
 
 /// The sum of information we've collected that we're trying to render into a set of documents.
+/// Responsible for turning information into pages to be rendered.
 pub struct Dossier {
     categories: HashMap<u64, DocCategory>,
     pub entries: HashMap<u64, Box<dyn DocEntry>>,
-    scopes: Vec<u64>,
-    string_table: StringTable,
+    pub string_table: StringTable,
     mapper: Rc<RefCell<SiteMapper>>,
+    pub config: Config,
+    builders: Vec<Box<dyn PageBuilder>>,
 
     cross_references: Vec<CrossReference>,
     info: DocInfo,
@@ -94,29 +99,21 @@ pub struct Dossier {
 
 impl Dossier {
     pub fn new(
-        profile: &Profile,
+        config: Config,
         categories: impl IntoIterator<Item = DocCategory>,
-        scopes: impl IntoIterator<Item = String>,
         string_table: StringTable,
         info: DocInfo,
         mapper: Rc<RefCell<SiteMapper>>,
     ) -> Dossier {
-        let mut entries: HashMap<u64, Box<dyn DocEntry>> = HashMap::new();
-        let mut scope_ids = Vec::new();
-        for scope in scopes {
-            let entry = ScopeDocEntry::new(scope);
-            scope_ids.push(entry.id);
-            entries.insert(entry.id, Box::new(entry));
-        }
-
         Dossier {
             categories: categories.into_iter().map(|c| (c.id, c)).collect(),
-            entries,
+            entries: HashMap::new(),
             info,
+            config,
             cross_references: Vec::new(),
-            scopes: scope_ids,
             string_table,
             mapper,
+            builders: Vec::new(),
         }
     }
 
@@ -125,12 +122,14 @@ impl Dossier {
         T: DocEntry + 'static,
     {
         for entry in entries {
-            match self.categories.get_mut(&entry.category_id()) {
-                Some(category) => Ok(category.entries.push(entry.id())),
-                None => Err(Error::msg(
-                    "Tried adding an entry with a category that doesn't exist?",
-                )),
-            }?;
+            if let Some(category_id) = entry.category_id() {
+                match self.categories.get_mut(&category_id) {
+                    Some(category) => Ok(category.entries.push(entry.id())),
+                    None => Err(Error::msg(
+                        "Tried adding an entry with a category that doesn't exist?",
+                    )),
+                }?;
+            }
 
             entry.record_cross_references(self);
 
@@ -138,6 +137,17 @@ impl Dossier {
         }
 
         Ok(())
+    }
+
+    pub fn add_builder<B: PageBuilder + 'static>(&mut self, builder: B) {
+        let entries = builder.build_entries(self, &self.config);
+
+        for entry in entries {
+            let id = entry.id();
+            self.entries.insert(id, entry);
+        }
+
+        self.builders.push(Box::new(builder))
     }
 
     pub fn create_pages(dossier: Rc<Dossier>, config: &Config) -> Vec<Box<dyn Page>> {
@@ -148,21 +158,40 @@ impl Dossier {
             entries.sort_by_key(|f| dossier.entries.get(f).unwrap().name());
             let mut page = 0;
             pages.extend(
-                paginate(&config.pagination, entries.as_slice(), |entries| {
-                    page += 1;
-                    CategoryListPage::new(category.clone(), entries, page, dossier.clone())
-                })
+                paginate(
+                    &config.pagination,
+                    1,
+                    entries.as_slice(),
+                    |num_pages, entries| {
+                        page += 1;
+                        CategoryListPage::new(
+                            category.clone(),
+                            entries,
+                            (page, num_pages),
+                            dossier.clone(),
+                        )
+                    },
+                )
                 .into_iter()
                 .map(|p| Box::new(p) as Box<dyn Page>),
             );
         }
 
-        for id in &dossier.scopes {
-            let entry = dossier.entry_as::<ScopeDocEntry>(*id);
-            pages.push(Box::new(ScopePage::new(entry.clone(), dossier.clone())));
+        for builder in &dossier.builders {
+            pages.extend(builder.build_pages(dossier.clone(), config).into_iter());
         }
 
         pages
+    }
+
+    /// Returns the IDs of items that reference this one
+    pub fn find_references_to(dossier: Rc<Dossier>, id: u64) -> Vec<u64> {
+        dossier
+            .cross_references
+            .iter()
+            .filter(|c| c.to_id == id)
+            .map(|c| c.from_id)
+            .collect_vec()
     }
 
     pub fn collate_references(
@@ -204,10 +233,18 @@ impl Dossier {
             for prop in property_names.drain(..) {
                 let mut items = group.remove(&prop).unwrap();
                 items.sort();
-                let s = DocString::new_from_iter(items.drain(..), Some(", "));
                 properties.push(CrossReferenceSection {
                     name: prop,
-                    body: DocStringSer(s, page_id, dossier.mapper.clone()),
+                    items: items
+                        .iter()
+                        .map(|s| {
+                            DocStringSer(
+                                DocString::new_from_segment(s.clone()),
+                                page_id,
+                                dossier.mapper.clone(),
+                            )
+                        })
+                        .collect_vec(),
                 });
             }
 
@@ -230,7 +267,7 @@ impl Dossier {
         let other = dossier.entries.get(&other_id).unwrap();
         let group_name = &dossier
             .categories
-            .get(&other.category_id())
+            .get(&other.category_id().unwrap())
             .unwrap()
             .display_name;
 
@@ -250,8 +287,19 @@ impl Dossier {
         scope: &usize,
     ) -> DocStringSegment {
         let scope = self.string_table.get(*scope).unwrap();
-        let id = ScopeDocEntry::id_from_name(&scope);
+        let id = ScopePage::entry_id_for_name(&scope);
         self.link_for_entry(context, from, &scope, &id)
+    }
+
+    pub fn link_for_mask(
+        &self,
+        context: &PageContext,
+        from: &dyn DocEntry,
+        mask: &usize,
+    ) -> DocStringSegment {
+        let mask = self.string_table.get(*mask).unwrap();
+        let id = MaskPage::entry_id_for_name(&mask);
+        self.link_for_entry(context, from, &mask, &id)
     }
 
     fn link_for_entry(
@@ -279,7 +327,15 @@ impl Dossier {
         self.add_reference(
             &prop,
             this_id,
-            ScopeDocEntry::id_from_name(&self.string_table.get(scope).unwrap()),
+            ScopePage::entry_id_for_name(&self.string_table.get(scope).unwrap()),
+        );
+    }
+
+    pub fn add_mask_reference(&mut self, prop: &str, this_id: u64, scope: usize) {
+        self.add_reference(
+            &prop,
+            this_id,
+            MaskPage::entry_id_for_name(&self.string_table.get(scope).unwrap()),
         );
     }
 

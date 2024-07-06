@@ -41,14 +41,25 @@ pub fn humanize_camel_case(text: &str) -> String {
     s
 }
 
-pub fn paginate<T, P, F>(mode: &PaginationMode, iter: &[T], mut to_page: F) -> Vec<P>
+pub fn paginate<T, P, F>(
+    mode: &PaginationMode,
+    item_weight: usize,
+    iter: &[T],
+    mut to_page: F,
+) -> Vec<P>
 where
-    F: FnMut(&[T]) -> P,
+    F: FnMut(usize, &[T]) -> P,
     P: Page,
 {
     match mode {
-        PaginationMode::None => std::iter::once(to_page(iter)).collect_vec(),
-        PaginationMode::Absolute { limit } => iter.chunks(*limit).map(to_page).collect_vec(),
+        PaginationMode::None => std::iter::once(to_page(1, iter)).collect_vec(),
+        PaginationMode::Absolute { limit } => {
+            let page_size = *limit * item_weight;
+            let num_pages = f32::ceil((iter.len() as f32) / (page_size as f32)) as usize;
+            iter.chunks(*limit * item_weight)
+                .map(|c| to_page(num_pages, c))
+                .collect_vec()
+        }
     }
 }
 
@@ -127,6 +138,12 @@ impl DocStringSer {
         for segment in self.0.segments() {
             DocStringSer::segment_to_html(self.1, self.2.clone(), &mut s, &mut in_para, segment)?;
         }
+
+        if in_para {
+            // finish paragraph
+            s.push_str("</p>");
+        }
+
         Ok(s)
     }
 }

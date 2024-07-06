@@ -1,6 +1,8 @@
 use std::{any::Any, hash::Hash, rc::Rc};
 
-use clauser::data::script_doc_parser::{doc_string::DocString, ScriptDocContent, ScriptDocEntry};
+use clauser::data::script_doc_parser::{
+    doc_string::DocString, ScriptDocCategory, ScriptDocContent, ScriptDocEntry,
+};
 use once_cell::sync::Lazy;
 
 use crate::{
@@ -21,11 +23,55 @@ impl<T: 'static> AsAny for T {
 
 pub trait DocEntry: AsAny {
     fn id(&self) -> u64;
-    fn category_id(&self) -> u64;
+    fn category_id(&self) -> Option<u64>;
     fn name(&self) -> &str;
     fn record_cross_references(&self, dossier: &mut Dossier);
     fn body(&self) -> Option<DocString>;
     fn properties(&self, context: &PageContext, dossier: Rc<Dossier>) -> Vec<(String, DocString)>;
+}
+
+pub struct EmptyDocEntry {
+    id: u64,
+    category_id: u64,
+    name: String,
+}
+
+impl EmptyDocEntry {
+    pub fn new(id: u64, category_id: u64, name: String) -> EmptyDocEntry {
+        EmptyDocEntry {
+            id,
+            category_id,
+            name,
+        }
+    }
+}
+
+impl DocEntry for EmptyDocEntry {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn category_id(&self) -> Option<u64> {
+        None
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn record_cross_references(&self, dossier: &mut Dossier) {}
+
+    fn body(&self) -> Option<DocString> {
+        None
+    }
+
+    fn properties(
+        &self,
+        _context: &PageContext,
+        _dossier: Rc<Dossier>,
+    ) -> Vec<(String, DocString)> {
+        vec![]
+    }
 }
 
 impl DocEntry for ScriptDocEntry {
@@ -33,8 +79,12 @@ impl DocEntry for ScriptDocEntry {
         self.id
     }
 
-    fn category_id(&self) -> u64 {
-        util::hash(&self.category)
+    fn category_id(&self) -> Option<u64> {
+        match self.category {
+            // modifiers go into the special masks page instead
+            ScriptDocCategory::Modifiers => None,
+            _ => Some(util::hash(&self.category)),
+        }
     }
 
     fn name(&self) -> &str {
@@ -92,7 +142,7 @@ impl DocEntry for ScriptDocEntry {
                 }
             }
             ScriptDocContent::Modifiers { mask, .. } => {
-                dossier.add_scope_reference("Mask", self.id, *mask);
+                dossier.add_mask_reference("Mask", self.id, *mask);
             }
             ScriptDocContent::OnActions { expected_scope, .. } => {
                 dossier.add_scope_reference("Expected Scope", self.id, *expected_scope)
@@ -200,7 +250,7 @@ impl DocEntry for ScriptDocEntry {
 
                 properties.push((
                     "Mask".into(),
-                    dossier.link_for_scope(context, self, mask).into(),
+                    dossier.link_for_mask(context, self, mask).into(),
                 ));
                 properties
             }
@@ -239,53 +289,5 @@ impl DocEntry for ScriptDocEntry {
                 ),
             ],
         }
-    }
-}
-
-// scopes is a special synthesized category
-#[derive(Debug, Hash, Clone)]
-pub struct ScopeDocEntry {
-    pub id: u64,
-    pub name: String,
-    pub display_name: String,
-}
-
-impl ScopeDocEntry {
-    pub fn new(name: String) -> ScopeDocEntry {
-        ScopeDocEntry {
-            id: ScopeDocEntry::id_from_name(&name),
-            display_name: humanize_camel_case(&name),
-            name,
-        }
-    }
-
-    pub fn id_from_name(name: &str) -> u64 {
-        util::hash(&format!("scope_{}", name))
-    }
-}
-
-static SCOPES_CATEGORY: Lazy<u64> = Lazy::new(|| util::hash(&"scopes"));
-
-impl DocEntry for ScopeDocEntry {
-    fn id(&self) -> u64 {
-        self.id
-    }
-
-    fn category_id(&self) -> u64 {
-        *SCOPES_CATEGORY
-    }
-
-    fn record_cross_references(&self, _dossier: &mut Dossier) {}
-
-    fn body(&self) -> Option<DocString> {
-        None
-    }
-
-    fn properties(&self, context: &PageContext, dossier: Rc<Dossier>) -> Vec<(String, DocString)> {
-        vec![]
-    }
-
-    fn name(&self) -> &str {
-        &self.name
     }
 }

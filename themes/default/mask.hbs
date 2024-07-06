@@ -1,0 +1,13 @@
+{{#> layout}}
+	{{{ body }}}
+
+	{{#each modifiers}}
+		<div class="pd-modifier">
+			<h3>{{ name }}</h3>
+			{{#if display_name}}<h5 class="pd-modifier-display-name">{{{ display_name }}}</h5>{{/if}}
+			{{#if description}}<div class="pd-modifier-description">{{{ description }}}</div>{{/if}}
+		</div>
+	{{/each}}
+
+	{{> pagination}}
+{{/layout}}

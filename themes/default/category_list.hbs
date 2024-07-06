@@ -19,11 +19,23 @@
 						<h4 class="pd-cross-ref-source">{{name}}</h4>
 						{{#each properties}}
 							<h5 class="pd-cross-ref-name">{{ name }}</h5>
-							<div class="pd-cross-ref-body">{{{body}}}</div>
+							<div class="pd-cross-ref-body pd-cols">
+								{{#columns items 2}}
+									<div class="pd-cross-ref-list pd-col pd-col-{{n}}">
+										<ul>
+											{{#each values}}
+												<li>{{{this}}}</li>
+											{{/each}}
+										</ul>
+									</div>
+								{{/columns}}
+							</div>
 						{{/each}}
 					{{/each}}
 				</div>
 			{{/with}}
 		</div>
 	{{/each}}
+
+	{{> pagination}}
 {{/layout}}

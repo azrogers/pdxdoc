@@ -72,7 +72,17 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
             ));
         }
 
-        self.write_text(&" ".repeat((self.depth * 4) as usize))
+        if self.depth == 0 {
+            return Ok(());
+        }
+
+        if !self.current_text.is_empty() {
+            let next: String = self.current_text.drain(..).collect();
+            self.current_text = String::new();
+            self.write_span_for(HighlightToken::Text, &next)?;
+        }
+
+        self.write(&format!("<span class=\"pd-w pd-w-{}\"></span>", self.depth))
     }
 
     fn write_span_for(&mut self, token: HighlightToken, out: &str) -> Result<(), Error> {

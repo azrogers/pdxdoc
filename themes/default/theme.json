@@ -1,0 +1,6 @@
+{
+	"name": "default",
+	"assets": ["assets/style.scss"],
+	"templates": "*.hbs",
+	"partials": "partials/*.hbs"
+}

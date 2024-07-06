@@ -2,12 +2,22 @@
 	{{{ body }}}
 
 	{{#with cross_refs}}
-		<div class="cross-refs">
+		<div class="pd-scope-cross-refs">
 			{{#each groups}}
-				<h4>{{name}}</h4>
+				<h4 class="pd-cross-ref-source">{{name}}</h4>
 				{{#each properties}}
-					<h5>{{ name }}</h5>
-					<div>{{{ body }}}</div>
+					<h5 class="pd-cross-ref-name">{{ name }}</h5>
+					<div class="pd-cross-ref-body pd-cols">
+						{{#columns items 2}}
+							<div class="pd-cross-ref-list pd-col pd-col-{{n}}">
+								<ul>
+									{{#each values}}
+										<li>{{{this}}}</li>
+									{{/each}}
+								</ul>
+							</div>
+						{{/columns}}
+					</div>
 				{{/each}}
 			{{/each}}
 		</div>

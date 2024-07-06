@@ -1,15 +1,13 @@
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     fs,
     path::{Path, PathBuf},
     rc::Rc,
 };
 
 use anyhow::Result;
-use handlebars::{
-    Context, Handlebars, Helper, HelperDef, HelperResult, Output, RenderContext, RenderErrorReason,
-};
+use handlebars::Handlebars;
 use itertools::Itertools;
 use log::info;
 use serde::Serialize;
@@ -18,8 +16,9 @@ use serde_json::Value;
 use crate::{
     config::{Config, Profile, UrlScheme},
     dossier::Dossier,
-    page::{Page, PageContext, Template},
-    theme::Theme,
+    helpers::{AssetHelper, ColumnsHelper, PageUrlHelper, PaginationHelper},
+    page::{Page, PageContext},
+    theme::{Template, Theme},
     util,
 };
 
@@ -30,8 +29,7 @@ struct SiteProfile {
 }
 
 impl SiteProfile {
-    pub fn new(config: &Config, profile: Profile, dossier: Dossier) -> SiteProfile {
-        let dossier = Rc::new(dossier);
+    pub fn new(config: &Config, profile: Profile, dossier: Rc<Dossier>) -> SiteProfile {
         let pages = Dossier::create_pages(dossier.clone(), config);
 
         SiteProfile {
@@ -50,6 +48,8 @@ struct SiteMapperPath {
 
 pub struct SiteMapper {
     page_paths: HashMap<u64, SiteMapperPath>,
+    groups: HashMap<u64, Vec<(usize, u64)>>,
+    page_groups: HashMap<u64, u64>,
     entry_anchors: HashMap<u64, String>,
     /// Maps each entry ID to a page ID
     entry_pages: HashMap<u64, u64>,
@@ -68,6 +68,8 @@ impl SiteMapper {
             config,
             page_profiles: HashMap::new(),
             profiles: HashMap::new(),
+            page_groups: HashMap::new(),
+            groups: HashMap::new(),
         }
     }
 
@@ -87,6 +89,19 @@ impl SiteMapper {
             .to_owned()
     }
 
+    pub fn page_to_entry_url(&self, from_page: &u64, to_entry: &u64) -> String {
+        Self::url_from(
+            &PathBuf::from(&self.page_paths.get(&from_page).unwrap().path),
+            &PathBuf::from(
+                &self
+                    .page_paths
+                    .get(self.entry_pages.get(to_entry).unwrap())
+                    .unwrap()
+                    .path,
+            ),
+        )
+    }
+
     pub fn asset_url_with_mapping(
         mapping: &HashMap<u64, String>,
         from_id: u64,
@@ -95,6 +110,13 @@ impl SiteMapper {
         Self::url_from(
             &PathBuf::from(&mapping.get(&from_id).unwrap()),
             &PathBuf::from("/assets").join(item),
+        )
+    }
+
+    pub fn url_with_mapping(mapping: &HashMap<u64, String>, from_id: u64, item: &str) -> String {
+        Self::url_from(
+            &PathBuf::from(&mapping.get(&from_id).unwrap()),
+            &PathBuf::from(item),
         )
     }
 
@@ -121,6 +143,17 @@ impl SiteMapper {
                     path: url.to_owned(),
                 },
             );
+
+            if let Some(pagination) = info.pagination {
+                let group_id = page.group_id();
+                self.page_groups.insert(page_id, group_id);
+                let group = match self.groups.entry(group_id) {
+                    Entry::Occupied(entries) => entries.into_mut(),
+                    Entry::Vacant(v) => v.insert(Vec::new()),
+                };
+
+                group.push((pagination.current_page, page_id));
+            }
 
             for id in page.entries() {
                 self.entry_pages.insert(id, page_id);
@@ -183,68 +216,41 @@ impl<'config> SiteGenerator<'config> {
         }
     }
 
-    pub fn add_profile(&mut self, profile: Profile, dossier: Dossier) {
-        let profile = SiteProfile::new(&self.config, profile, dossier);
+    pub fn add_profile(&mut self, profile: Profile, dossier: Rc<Dossier>) {
+        let profile = SiteProfile::new(self.config, profile, dossier);
         self.mapper.borrow_mut().record_profile(&profile);
         self.profiles.push(profile)
     }
 
     pub fn generate<'t>(&self, theme: &'t dyn Theme<'t>) -> Result<()> {
+        let mapping: HashMap<u64, String> = self
+            .mapper
+            .borrow()
+            .page_paths
+            .iter()
+            .map(|(p, path)| (*p, path.path.clone()))
+            .collect();
+
         let mut handlebars = Handlebars::new();
 
-        #[derive(Clone)]
-        struct AssetHelper {
-            mapper: HashMap<u64, String>,
+        for (name, str) in theme.partials() {
+            handlebars.register_partial(name, str)?;
         }
 
-        impl HelperDef for AssetHelper {
-            fn call<'reg: 'rc, 'rc>(
-                &self,
-                h: &Helper,
-                _hb: &Handlebars,
-                context: &Context,
-                _rc: &mut RenderContext,
-                out: &mut dyn Output,
-            ) -> HelperResult {
-                let asset = h.param(0).and_then(|v| v.value().as_str()).ok_or(
-                    RenderErrorReason::ParamTypeMismatchForName(
-                        "asset",
-                        "0".to_string(),
-                        "&str".to_string(),
-                    ),
-                )?;
-
-                let page_id = context
-                    .data()
-                    .as_object()
-                    .unwrap()
-                    .get("page_id")
-                    .unwrap()
-                    .as_number()
-                    .unwrap()
-                    .as_u64()
-                    .unwrap();
-
-                out.write(&SiteMapper::asset_url_with_mapping(
-                    &self.mapper,
-                    page_id,
-                    asset,
-                ))?;
-                Ok(())
-            }
-        }
-
-        handlebars.register_partial("layout", theme.str_for_template(Template::Layout)?)?;
         handlebars.register_helper(
             "asset_url",
             Box::new(AssetHelper {
-                mapper: self
-                    .mapper
-                    .borrow()
-                    .page_paths
-                    .iter()
-                    .map(|(p, path)| (*p, path.path.clone()))
-                    .collect(),
+                mapper: mapping.clone(),
+            }),
+        );
+        handlebars.register_helper("pagination", Box::new(PaginationHelper));
+        handlebars.register_helper("columns", Box::new(ColumnsHelper));
+        handlebars.register_helper(
+            "page_url",
+            Box::new(PageUrlHelper {
+                mapping,
+                page_to_groups: self.mapper.borrow().page_groups.clone(),
+                groups_to_pages: self.mapper.borrow().groups.clone(),
             }),
         );
 
@@ -285,13 +291,14 @@ impl<'config> SiteGenerator<'config> {
                 };
 
                 let rendered = handlebars.render(info.template.into(), &data)?;
+                let minified = html_minifier::minify(rendered).unwrap();
 
                 let mapper = self.mapper.borrow();
                 let path = mapper.page_paths.get(&page.id()).unwrap();
                 if let Some(dir) = path.disk.parent() {
                     fs::create_dir_all(dir)?;
                 }
-                fs::write(&path.disk, rendered)?;
+                fs::write(&path.disk, minified)?;
 
                 info!(
                     "rendered page {} to {}",
@@ -308,8 +315,8 @@ impl<'config> SiteGenerator<'config> {
 
         // write theme assets
         for (path, bytes) in theme.assets() {
-            let out_path = assets_dir.clone().join(path);
-            fs::write(&out_path, &bytes)?;
+            let out_path = PathBuf::from(&self.config.output_dir).join(path);
+            fs::write(&out_path, bytes)?;
             info!(
                 "wrote asset {}",
                 out_path.to_str().unwrap().replace("\\", "/")

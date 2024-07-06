@@ -1,0 +1,15 @@
+{{#> layout}}
+	{{{ body }}}
+
+	<div class="pd-index-listing pd-cols">
+		{{#columns items 2}}
+		<div class="pd-index-col pd-col pd-col-{{n}}">
+			<ul class="pd-index-listing">
+				{{#each values}}
+					<li>{{{ this }}}</li>
+				{{/each}}
+			</ul>
+		</div>
+		{{/columns}}
+	</div>
+{{/layout}}

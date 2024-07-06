@@ -24,7 +24,19 @@ body {
 	margin: auto;
 }
 
+.pd-cols {
+	display: flex;
+}
+
+@for $i from 1 through 12 {
+	.pd-col.pd-col-#{$i} {
+		width: (100% / $i);
+	}
+}
+
 /* Syntax Highlighting */
+$indent-width: 2em;
+
 /* https://atelierbram.github.io/syntax-highlighting/atelier-schemes/plateau/ */
 $base00: hsl(0, 7%, 10%);     /* #1b1818 */
 $base01: hsl(0, 6%, 15%);     /* #292424 */
@@ -84,5 +96,15 @@ code, .pd-highlight {
 
 	.pd-token-Date {
 		color: $base0b;
+	}
+
+	.pd-w {
+		display: inline-block;
+	}
+}
+
+@for $i from 1 through 9 {
+	.pd-w.pd-w-#{$i} {
+		width: $indent-width * $i;
 	}
 }
