@@ -52,7 +52,7 @@ $blue:    $base0d;
 $violet:  $base0e;
 $magenta: $base0f;
 
-code, .clhighlight {
+code, .pd-highlight {
 	font-family: "Inconsolata", "Courier New", Courier, monospace;
 	padding: 5px;
 	background-color: $base06;
@@ -61,28 +61,28 @@ code, .clhighlight {
 	white-space: preserve-spaces;
 	white-space-collapse: preserve-spaces;
 
-	.cltoken-Comment,
-	.cltoken-Placeholder {
+	.pd-token-Comment,
+	.pd-token-Placeholder {
 		color: $base04;
 	}
 	
-	.cltoken-Text {
+	.pd-token-Text, &.pd-raw-code {
 		color: $base05;
 	}
 	
-	.cltoken-Bool, .cltoken-Number, .cltoken-Operator {
+	.pd-token-Bool, .pd-token-Number, .pd-token-Operator {
 		color: $base09;
 	}
 	
-	.cltoken-Identifier {
+	.pd-token-Identifier {
 		color: $base0a;
 	}
 	
-	.cltoken-String {
+	.pd-token-String {
 		color: $base0c;
 	}
 
-	.cltoken-Date {
+	.pd-token-Date {
 		color: $base0b;
 	}
 }

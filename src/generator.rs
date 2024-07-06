@@ -1,16 +1,14 @@
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Mutex,
 };
 
 use anyhow::Result;
 use handlebars::{
-    Context, Handlebars, Helper, HelperDef, HelperResult, JsonRender, Output, RenderContext,
-    RenderError, RenderErrorReason,
+    Context, Handlebars, Helper, HelperDef, HelperResult, Output, RenderContext, RenderErrorReason,
 };
 use itertools::Itertools;
 use log::info;
@@ -20,10 +18,9 @@ use serde_json::Value;
 use crate::{
     config::{Config, Profile, UrlScheme},
     dossier::Dossier,
-    error::Error,
     page::{Page, PageContext, Template},
     theme::Theme,
-    util::{self, AssetSizeMode, GameAssets, IconFinder, RequestedAsset},
+    util,
 };
 
 struct SiteProfile {
@@ -33,9 +30,9 @@ struct SiteProfile {
 }
 
 impl SiteProfile {
-    pub fn new(profile: Profile, dossier: Dossier) -> SiteProfile {
+    pub fn new(config: &Config, profile: Profile, dossier: Dossier) -> SiteProfile {
         let dossier = Rc::new(dossier);
-        let pages = Dossier::create_pages(dossier.clone());
+        let pages = Dossier::create_pages(dossier.clone(), config);
 
         SiteProfile {
             profile,
@@ -58,11 +55,8 @@ pub struct SiteMapper {
     entry_pages: HashMap<u64, u64>,
     config: Config,
 
-    // A list of game assets that we need to render the page,
-    requested_assets: Vec<RequestedAsset>,
     page_profiles: HashMap<u64, u64>,
     profiles: HashMap<u64, Profile>,
-    icons: HashMap<u64, IconFinder>,
 }
 
 impl SiteMapper {
@@ -74,8 +68,6 @@ impl SiteMapper {
             config,
             page_profiles: HashMap::new(),
             profiles: HashMap::new(),
-            requested_assets: Vec::new(),
-            icons: HashMap::new(),
         }
     }
 
@@ -104,45 +96,6 @@ impl SiteMapper {
             &PathBuf::from(&mapping.get(&from_id).unwrap()),
             &PathBuf::from("/assets").join(item),
         )
-    }
-
-    pub fn url_for_icon(
-        &mut self,
-        icon: &str,
-        namespace: Option<&str>,
-        from_page: u64,
-    ) -> Option<String> {
-        let from_path = self.page_paths.get(&from_page)?;
-        let profile_id = self.page_profiles.get(&from_page)?;
-        let icons = self.icons.get(&profile_id)?;
-        let icon_path = icons.find(icon, namespace)?;
-
-        // We already have this asset listed, let's not do it again
-        if let Some(prev) = self
-            .requested_assets
-            .iter()
-            .filter(|i| i.source == icon_path)
-            .next()
-        {
-            return Some(Self::url_from(
-                &PathBuf::from(&from_path.path),
-                &PathBuf::from(&prev.target_url),
-            ));
-        }
-
-        let dest_path = PathBuf::from("icons/")
-            .join(&GameAssets::new_filename_for_asset(&icon_path)?.file_name()?);
-
-        let root_url = self.asset_path(dest_path.to_str()?);
-        let target_url = Self::url_from(&PathBuf::from(&from_path.path), &root_url);
-
-        self.requested_assets.push(RequestedAsset {
-            target_url: target_url.clone(),
-            source: icon_path.to_path_buf(),
-            size_mode: AssetSizeMode::MaxDimension(64),
-        });
-
-        Some(target_url)
     }
 
     fn record_profile(&mut self, p: &SiteProfile) {
@@ -179,9 +132,6 @@ impl SiteMapper {
 
             self.page_profiles.insert(page_id, profile_id);
         }
-
-        let finder = IconFinder::new(&PathBuf::from(&p.profile.game_data_dir)).unwrap();
-        self.icons.insert(profile_id, finder);
     }
 
     pub fn url_for_entry(&self, from_id: u64, to_id: u64) -> String {
@@ -213,7 +163,7 @@ impl SiteMapper {
         let filename = dest.file_name().unwrap();
         let source = source.parent().unwrap();
         let dest = dest.parent().unwrap();
-        let diff = pathdiff::diff_paths(dest, source).unwrap().join(&filename);
+        let diff = pathdiff::diff_paths(dest, source).unwrap().join(filename);
         diff.to_str().unwrap().replace("\\", "/")
     }
 }
@@ -234,7 +184,7 @@ impl<'config> SiteGenerator<'config> {
     }
 
     pub fn add_profile(&mut self, profile: Profile, dossier: Dossier) {
-        let profile = SiteProfile::new(profile, dossier);
+        let profile = SiteProfile::new(&self.config, profile, dossier);
         self.mapper.borrow_mut().record_profile(&profile);
         self.profiles.push(profile)
     }
@@ -251,9 +201,9 @@ impl<'config> SiteGenerator<'config> {
             fn call<'reg: 'rc, 'rc>(
                 &self,
                 h: &Helper,
-                hb: &Handlebars,
+                _hb: &Handlebars,
                 context: &Context,
-                rc: &mut RenderContext,
+                _rc: &mut RenderContext,
                 out: &mut dyn Output,
             ) -> HelperResult {
                 let asset = h.param(0).and_then(|v| v.value().as_str()).ok_or(
@@ -364,11 +314,6 @@ impl<'config> SiteGenerator<'config> {
                 "wrote asset {}",
                 out_path.to_str().unwrap().replace("\\", "/")
             );
-        }
-
-        for asset in &self.mapper.borrow().requested_assets {
-            GameAssets::convert_image(&asset, &assets_dir)?;
-            info!("wrote asset {}", asset.target_url);
         }
 
         info!("generated to {}", self.config.output_dir.to_str().unwrap());

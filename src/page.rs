@@ -66,16 +66,21 @@ pub struct CategoryListPage {
     category: DocCategory,
     dossier: Rc<Dossier>,
     entries: Vec<u64>,
+    page: usize,
 }
 
 impl CategoryListPage {
-    pub fn new(category: DocCategory, dossier: Rc<Dossier>) -> CategoryListPage {
-        let mut entries = category.entries.clone();
-        entries.sort_by_key(|f| dossier.entries.get(f).unwrap().name());
+    pub fn new(
+        category: DocCategory,
+        entries: &[u64],
+        page: usize,
+        dossier: Rc<Dossier>,
+    ) -> CategoryListPage {
         CategoryListPage {
             category,
             dossier,
-            entries,
+            entries: entries.to_vec(),
+            page,
         }
     }
 }
@@ -85,7 +90,7 @@ impl Page for CategoryListPage {
         PageInfo {
             title: self.category.display_name.clone(),
             template: Template::CategoryList,
-            path: self.category.name.clone(),
+            path: format!("{}_p{}", self.category.name, self.page),
         }
     }
 
@@ -145,7 +150,7 @@ impl Page for CategoryListPage {
         }
 
         serde_json::to_value(Data {
-            body: DocStringSer(DocString::new(), self.id(), context.mapper.clone()),
+            body: DocStringSer(DocString::default(), self.id(), context.mapper.clone()),
             entries,
         })
         .unwrap()
@@ -165,7 +170,7 @@ impl Page for CategoryListPage {
     }
 
     fn id(&self) -> u64 {
-        util::hash(&self.category)
+        util::hash(&self.category) ^ util::hash(&self.page)
     }
 }
 

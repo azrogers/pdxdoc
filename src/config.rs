@@ -38,14 +38,12 @@ fn default_limit() -> usize {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 pub enum PaginationMode {
+    #[serde(rename = "none")]
     None,
+    #[serde(rename = "absolute")]
     Absolute {
         #[serde(default = "default_limit")]
         limit: usize,
-    },
-    Alphabetic {
-        #[serde(default = "default_limit")]
-        sub_limit: usize,
     },
 }
 

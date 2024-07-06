@@ -1,9 +1,7 @@
-use std::iter;
-
 use clauser::{
     error::{Error, ErrorType},
     types::{CollectionType, Date, ObjectKey, Operator, TextPosition},
-    value::{Value, ValueOwned, ValueString},
+    value::{ValueOwned, ValueString},
     writer::{Writer, WriterOutput},
 };
 
@@ -11,7 +9,7 @@ pub struct SyntaxHighlighter {}
 
 impl SyntaxHighlighter {
     pub fn to_html(s: &mut String, code: &ValueOwned) -> Result<(), Error> {
-        s.push_str("<div class=\"clhighlight\">");
+        s.push_str("<div class=\"pd-highlight\">");
         let mut writer = HighlightedWriter::new(s);
         code.write(&mut writer)?;
         s.push_str("</div>");
@@ -44,6 +42,7 @@ struct HighlightedWriter<'out, T: WriterOutput> {
     position: TextPosition,
     current_text: String,
     started: bool,
+    has_written_token: bool,
 }
 
 impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
@@ -73,16 +72,12 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
             ));
         }
 
-        self.write_text(
-            &iter::repeat(' ')
-                .take((self.depth * 4) as usize)
-                .collect::<String>(),
-        )
+        self.write_text(&" ".repeat((self.depth * 4) as usize))
     }
 
     fn write_span_for(&mut self, token: HighlightToken, out: &str) -> Result<(), Error> {
         let text = format!(
-            "<span class=\"cltoken-{:?}\">{}</span>",
+            "<span class=\"pd-token-{:?}\">{}</span>",
             token,
             handlebars::html_escape(out)
         );
@@ -103,6 +98,7 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
             self.write_span_for(HighlightToken::Text, &next)?;
         }
 
+        self.has_written_token = true;
         self.write_span_for(token, out)
     }
 
@@ -112,11 +108,11 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
         same_line: bool,
     ) -> Result<(), Error> {
         if self.depth >= 0 {
-            self.write_text("{")?;
+            self.write_text("{ ")?;
         }
 
         if !same_line {
-            self.depth = self.depth + 1;
+            self.depth += 1;
         }
 
         self.frames.push(HighlightFrame {
@@ -140,6 +136,8 @@ impl<'out, T: WriterOutput> HighlightedWriter<'out, T> {
             if self.depth >= 0 {
                 self.indent()?;
             }
+        } else {
+            self.write_text(" ")?;
         }
 
         if self.depth >= 0 {
@@ -171,6 +169,7 @@ impl<'out, T: WriterOutput> Writer<'out, T> for HighlightedWriter<'out, T> {
             current_text: String::new(),
             depth: -1,
             started: false,
+            has_written_token: false,
         }
     }
 
@@ -183,6 +182,11 @@ impl<'out, T: WriterOutput> Writer<'out, T> for HighlightedWriter<'out, T> {
     }
 
     fn write_property<S: ValueString>(&mut self, key: &ObjectKey<S>) -> Result<(), Error> {
+        if !self.started && self.has_written_token {
+            // we've got stuff before this but we haven't yet written a property
+            self.new_line()?;
+        }
+
         let frame = self.frames.last().ok_or(Error::new_contextless(
             ErrorType::InvalidState,
             self.position.index,
@@ -214,7 +218,7 @@ impl<'out, T: WriterOutput> Writer<'out, T> for HighlightedWriter<'out, T> {
     }
 
     fn begin_array(&mut self, length: Option<usize>) -> Result<(), Error> {
-        let same_line = length.and_then(|l| Some(l < 4)).unwrap_or(false);
+        let same_line = length.map(|l| l < 4).unwrap_or(false);
         self.start_collection(CollectionType::Array, same_line)
     }
 
@@ -272,9 +276,12 @@ impl<'out, T: WriterOutput> Writer<'out, T> for HighlightedWriter<'out, T> {
     }
 
     fn write_comment(&mut self, comment: &str) -> Result<(), Error> {
-        self.write_nontext(HighlightToken::Comment, &format!("# {}", comment))?;
-        self.new_line()?;
-        self.indent()
+        // don't write a new line if we're at the start of the file
+        if self.has_written_token {
+            self.new_line()?;
+            self.indent()?;
+        }
+        self.write_nontext(HighlightToken::Comment, &format!("# {}", comment))
     }
 
     fn write_value(&mut self, val: &str) -> Result<(), Error> {

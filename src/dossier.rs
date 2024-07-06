@@ -9,12 +9,12 @@ use log::warn;
 use serde::Serialize;
 
 use crate::{
-    config::Profile,
+    config::{Config, Profile},
     entry::{DocEntry, ScopeDocEntry},
     games::GameVersion,
     generator::SiteMapper,
     page::{CategoryListPage, Page, PageContext, ScopePage},
-    util::{self, DocStringSer},
+    util::{self, paginate, DocStringSer},
 };
 
 #[derive(Clone, Hash)]
@@ -140,14 +140,21 @@ impl Dossier {
         Ok(())
     }
 
-    pub fn create_pages(dossier: Rc<Dossier>) -> Vec<Box<dyn Page>> {
+    pub fn create_pages(dossier: Rc<Dossier>, config: &Config) -> Vec<Box<dyn Page>> {
         let mut pages: Vec<Box<dyn Page>> = Vec::new();
 
-        for (_, category) in &dossier.categories {
-            pages.push(Box::new(CategoryListPage::new(
-                category.clone(),
-                dossier.clone(),
-            )));
+        for category in dossier.categories.values() {
+            let mut entries = category.entries.clone();
+            entries.sort_by_key(|f| dossier.entries.get(f).unwrap().name());
+            let mut page = 0;
+            pages.extend(
+                paginate(&config.pagination, entries.as_slice(), |entries| {
+                    page += 1;
+                    CategoryListPage::new(category.clone(), entries, page, dossier.clone())
+                })
+                .into_iter()
+                .map(|p| Box::new(p) as Box<dyn Page>),
+            );
         }
 
         for id in &dossier.scopes {
