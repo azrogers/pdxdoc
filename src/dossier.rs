@@ -7,13 +7,13 @@ use clauser::{
 };
 use itertools::Itertools;
 use log::warn;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{Config, Profile},
     entry::DocEntry,
     games::GameVersion,
-    generator::SiteMapper,
+    mapper::SiteMapper,
     page::{
         CategoryListPage, GenericListPage, MaskPage, Page, PageBuilder, PageContext, ScopePage,
     },
@@ -39,18 +39,24 @@ impl DocCategory {
     }
 }
 
+#[derive(Deserialize, Serialize, Clone)]
 pub struct DocVersion {
     game: GameVersion,
     pdxdoc: String,
 }
 
+#[derive(Deserialize, Serialize, Clone)]
 pub struct DocInfo {
     version: DocVersion,
+    title: String,
+    game: String,
 }
 
 impl DocInfo {
-    pub fn new(game_version: GameVersion) -> DocInfo {
+    pub fn new(profile: &Profile, game_version: GameVersion) -> DocInfo {
         DocInfo {
+            title: profile.title.clone(),
+            game: profile.game.to_string(),
             version: DocVersion {
                 game: game_version,
                 pdxdoc: format!("pdxdoc {}", env!("CARGO_PKG_VERSION")),
@@ -94,7 +100,7 @@ pub struct Dossier {
     builders: Vec<Box<dyn PageBuilder>>,
 
     cross_references: Vec<CrossReference>,
-    info: DocInfo,
+    pub info: DocInfo,
 }
 
 impl Dossier {

@@ -28,9 +28,10 @@ $blue:    $base0d;
 $violet:  $base0e;
 $magenta: $base0f;
 
-code, .pd-highlight {
+.pd-raw-code, .pd-highlight {
 	font-family: "Inconsolata", "Courier New", Courier, monospace;
 	padding: 5px;
+	margin-bottom: 5px;
 	background-color: $base06;
 	width: 100%;
 	white-space: pre;

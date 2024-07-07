@@ -4,7 +4,7 @@ use anyhow::{Error, Result};
 use clauser::data::script_doc_parser::ScriptDocParserResult;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use victoria3::Victoria3GameDocProvider;
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
 mod victoria3;
 
 /// Version information about a game.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GameVersion {
     /// The version number string for this release, like "1.7.1"
     pub version_number: String,

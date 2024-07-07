@@ -14,6 +14,14 @@ pub enum ProfileGame {
     Victoria3,
 }
 
+impl ToString for ProfileGame {
+    fn to_string(&self) -> String {
+        match self {
+            ProfileGame::Victoria3 => "Victoria 3".into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Profile {
     pub name: String,

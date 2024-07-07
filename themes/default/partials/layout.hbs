@@ -2,32 +2,66 @@
 <html>
 	<head>
 		<title>{{ title }}</title>
+		<link href="{{ asset_url "style.css" }}" rel="preload" as="style" />
 		<link href="{{ asset_url "style.css" }}" rel="stylesheet" />
 	</head>
 	<body>
-		<div class="pd-page">
-			<div class="pd-page-breadcrumbs">
-				{{#breadcrumbs breadcrumbs}}
-					{{#if (not is_first)}}<div "pd-crumb-sep">&rsaquo;</div>{{/if}}
-					<div class="pb-crumb-{{#if is_last}}current{{else}}prev{{/if}} {{#if is_paged}}pb-crumb-paged{{/if}}">
-						{{#if is_last}}
-							<span class="pb-crumb-title">{{ title }}</span>
-						{{else}}
-							<a class="pb-crumb-title" href="{{ url }}">{{ title }}</a>
-						{{/if}}
-						{{#if is_paged}}
-							<span class="pb-crumb-page-info">Page <strong>{{current_page}}</strong> of <strong>{{total_pages}}</strong></span>
-						{{/if}}
-					</div>
-				{{/breadcrumbs}}
+		<div class="pd-header">
+			<div class="pd-header-container">
+				<div class="pd-breadcrumbs">
+					{{#breadcrumbs breadcrumbs}}
+						{{#if (not is_first)}}<div class="pd-crumb-sep">&rsaquo;</div>{{/if}}
+						<div class="pb-crumb-{{#if is_last}}current{{else}}prev{{/if}} {{#if is_paged}}pb-crumb-paged{{/if}}">
+							{{#if is_last}}
+								<span class="pb-crumb-title">{{ title }}</span>
+							{{else}}
+								<a class="pb-crumb-title" href="{{ url }}">{{ title }}</a>
+							{{/if}}
+							{{#if is_paged}}
+								<span class="pb-crumb-page-info">Page <strong>{{current_page}}</strong> of <strong>{{total_pages}}</strong></span>
+							{{/if}}
+						</div>
+					{{/breadcrumbs}}
+				</div>
+				{{#with data}}
+				{{#if pagination}}{{> pagination}}{{/if}}
+				{{/with}}
 			</div>
-			<div class="pd-page-header">
-				<h2>{{ name }}</h2>
+		</div>
+		<div class="pd-container">
+			<div class="pd-sidebar">
+				<div class="pd-sidebar-header">
+					{{#with doc_info}}
+						<h1>{{title}}</h1>
+					{{/with}}
+				</div>
+				<div class="pd-sidebar-links">
+					{{#site_map site_map}}
+						{{#if (and (gt depth 0) (or is_current (not (gt depth 1))))}}
+							<div class="pd-sitemap-entry pd-sitemap-depth-{{depth}} {{#if is_current}}pd-sitemap-current{{/if}} {{#if has_children}}pd-sitemap-parent{{/if}}">
+								<a class="pd-sitemap-title" href="{{ url }}">{{{ replace title "_" "_&#8203;"}}}</a>
+							</div>
+						{{/if}}
+					{{/site_map}}
+				</div>
+				<div class="pd-sidebar-footer">
+					{{#with doc_info}}
+						{{#with version}}
+							<p>built with <a href="https://github.com/azrogers/pdxdoc">{{pdxdoc}}</a></p>
+						{{/with}}
+						<p title="{{version.game.detailed}}">generated from {{game}} v{{version.game.version_number}}</p>
+					{{/with}}
+				</div>
 			</div>
+			<div class="pd-page">
+				<div class="pd-page-header">
+					<h2 class="pd-page-title">{{ name }}</h2>
+				</div>
 
-			{{#with data}}
-			{{> @partial-block }}
-			{{/with}}
+				{{#with data}}
+				{{> @partial-block }}
+				{{/with}}
+			</div>
 		</div>
 	</body>
 </html>

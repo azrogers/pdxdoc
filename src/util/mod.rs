@@ -10,7 +10,7 @@ use serde::{ser, Serialize};
 use syntax_highlight::SyntaxHighlighter;
 
 use crate::config::PaginationMode;
-use crate::generator::SiteMapper;
+use crate::mapper::SiteMapper;
 use crate::page::Page;
 
 use anyhow::{Error, Result};

@@ -14,7 +14,8 @@ use crate::{
     config::Config,
     dossier::{CollatedCrossReferences, DocCategory, Dossier},
     entry::{DocEntry, EmptyDocEntry},
-    generator::{SiteMapper, SiteProfile},
+    generator::SiteProfile,
+    mapper::SiteMapper,
     theme::Template,
     util::{self, paginate, DocStringSer},
 };
@@ -34,7 +35,7 @@ pub enum Breadcrumb {
 
 #[derive(Deserialize, Serialize, Default, Clone)]
 pub struct Breadcrumbs {
-    crumbs: Vec<Breadcrumb>,
+    pub crumbs: Vec<Breadcrumb>,
 }
 
 impl Breadcrumbs {
@@ -65,12 +66,12 @@ impl Breadcrumbs {
         let page_info = page.info();
         let crumb = match page_info.pagination {
             Some(pagination) if pagination.total_pages > 1 => Breadcrumb::Paged {
-                title: page_info.title.clone(),
+                title: page_info.short_title.clone(),
                 root_url: Self::ensure_html_on_url(&page.page_url(1)),
                 page: pagination.clone(),
             },
             _ => Breadcrumb::Single {
-                title: page_info.title.clone(),
+                title: page_info.short_title.clone(),
                 absolute_url: Self::ensure_html_on_url(&page_info.path),
             },
         };
@@ -116,7 +117,7 @@ impl PageContext {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct PaginationInfo {
     pub current_page: usize,
     pub total_pages: usize,
@@ -134,6 +135,7 @@ impl PaginationInfo {
 
 pub struct PageInfo {
     pub title: String,
+    pub short_title: String,
     pub template: Template,
     pub path: String,
     pub pagination: Option<PaginationInfo>,
@@ -193,6 +195,7 @@ impl Page for CategoryListPage {
     fn info(&self) -> PageInfo {
         PageInfo {
             title: self.category.display_name.clone(),
+            short_title: self.category.display_name.clone(),
             template: Template::CategoryList,
             path: match self.page.total_pages {
                 1 => self.category.name.clone(),
@@ -372,6 +375,7 @@ impl Page for IndexPage {
     fn info(&self) -> PageInfo {
         PageInfo {
             title: self.title.clone(),
+            short_title: self.title.clone(),
             template: Template::ListIndex,
             path: self.path.clone(),
             pagination: None,
@@ -464,6 +468,7 @@ impl Page for ScopePage {
 
     fn info(&self) -> PageInfo {
         PageInfo {
+            short_title: self.name.clone(),
             title: format!("Scope: {}", self.name),
             path: format!("scopes/{}", self.name),
             template: Template::Scope,
@@ -564,6 +569,7 @@ impl Page for MaskPage {
 
     fn info(&self) -> PageInfo {
         PageInfo {
+            short_title: self.name.clone(),
             title: format!("Modifiers for Mask: {}", self.name),
             path: match self.page.total_pages {
                 1 => format!("modifiers/{}", self.name),

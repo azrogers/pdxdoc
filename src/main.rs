@@ -7,9 +7,10 @@ use config::{Config, Profile, ProfileGame};
 use dossier::{DocInfo, Dossier};
 use error::Error;
 use games::GameDocProvider;
-use generator::{SiteGenerator, SiteMapper};
+use generator::SiteGenerator;
 use itertools::Itertools;
 use log::info;
+use mapper::SiteMapper;
 use page::{GenericListPageBuilder, MaskPage, ScopePage};
 use theme::PackagedTheme;
 
@@ -20,6 +21,7 @@ mod error;
 mod games;
 mod generator;
 mod helpers;
+mod mapper;
 mod page;
 mod theme;
 mod util;
@@ -64,7 +66,7 @@ fn process_profile(
         config.clone(),
         provider.get_categories(profile)?,
         string_table,
-        DocInfo::new(version),
+        DocInfo::new(profile, version),
         mapper,
     );
 

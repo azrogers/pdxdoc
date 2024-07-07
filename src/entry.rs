@@ -1,8 +1,10 @@
 use std::{any::Any, hash::Hash, rc::Rc};
 
 use clauser::data::script_doc_parser::{
-    doc_string::DocString, ScriptDocCategory, ScriptDocContent, ScriptDocEntry,
+    doc_string::{DocString, DocStringSegment},
+    ScriptDocCategory, ScriptDocContent, ScriptDocEntry,
 };
+use itertools::Itertools;
 use once_cell::sync::Lazy;
 
 use crate::{
@@ -183,7 +185,15 @@ impl DocEntry for ScriptDocEntry {
                         dossier.link_for_scope(context, self, scope).into(),
                     ),
                     ("Random Valid?".into(), (*random_valid).into()),
-                    ("Entries".into(), entries.join("\n").into()),
+                    (
+                        "Entries".into(),
+                        DocString::new_from_iter(
+                            entries.iter().map(|e| DocStringSegment::Text {
+                                contents: format!("<p>{}</p>", e),
+                            }),
+                            None,
+                        ),
+                    ),
                 ]
             }
             ScriptDocContent::Effects {

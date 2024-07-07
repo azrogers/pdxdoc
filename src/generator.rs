@@ -15,8 +15,12 @@ use serde_json::Value;
 
 use crate::{
     config::{Config, Profile, UrlScheme},
-    dossier::Dossier,
-    helpers::{AssetHelper, BreadcrumbsHelper, ColumnsHelper, PageUrlHelper, PaginationHelper},
+    dossier::{DocInfo, Dossier},
+    helpers::{
+        AssetHelper, BreadcrumbsHelper, ColumnsHelper, PageUrlHelper, PaginationHelper,
+        SiteMapHelper,
+    },
+    mapper::{SiteMap, SiteMapper},
     page::{Breadcrumbs, Page, PageContext},
     theme::{Template, Theme},
     util,
@@ -37,167 +41,6 @@ impl SiteProfile {
             dossier,
             pages,
         }
-    }
-}
-
-#[derive(Clone)]
-struct SiteMapperPath {
-    disk: PathBuf,
-    path: String,
-}
-
-pub struct SiteMapper {
-    page_paths: HashMap<u64, SiteMapperPath>,
-    groups: HashMap<u64, Vec<(usize, u64)>>,
-    page_groups: HashMap<u64, u64>,
-    entry_anchors: HashMap<u64, String>,
-    /// Maps each entry ID to a page ID
-    entry_pages: HashMap<u64, u64>,
-    config: Config,
-
-    page_profiles: HashMap<u64, u64>,
-    profiles: HashMap<u64, Profile>,
-}
-
-impl SiteMapper {
-    pub fn new(config: Config) -> SiteMapper {
-        SiteMapper {
-            page_paths: HashMap::new(),
-            entry_anchors: HashMap::new(),
-            entry_pages: HashMap::new(),
-            config,
-            page_profiles: HashMap::new(),
-            profiles: HashMap::new(),
-            page_groups: HashMap::new(),
-            groups: HashMap::new(),
-        }
-    }
-
-    pub fn asset_url(&self, from_id: u64, item: &str) -> String {
-        Self::url_from(
-            &PathBuf::from(&self.page_paths.get(&from_id).unwrap().path),
-            &PathBuf::from("/assets").join(item),
-        )
-    }
-
-    pub fn asset_path(&self, item: &str) -> PathBuf {
-        self.config
-            .output_dir
-            .clone()
-            .join("assets")
-            .join(item)
-            .to_owned()
-    }
-
-    pub fn page_to_entry_url(&self, from_page: &u64, to_entry: &u64) -> String {
-        Self::url_from(
-            &PathBuf::from(&self.page_paths.get(&from_page).unwrap().path),
-            &PathBuf::from(
-                &self
-                    .page_paths
-                    .get(self.entry_pages.get(to_entry).unwrap())
-                    .unwrap()
-                    .path,
-            ),
-        )
-    }
-
-    pub fn asset_url_with_mapping(
-        mapping: &HashMap<u64, String>,
-        from_id: u64,
-        item: &str,
-    ) -> String {
-        Self::url_from(
-            &PathBuf::from(&mapping.get(&from_id).unwrap()),
-            &PathBuf::from("/assets").join(item),
-        )
-    }
-
-    pub fn url_with_mapping(mapping: &HashMap<u64, String>, from_id: u64, item: &str) -> String {
-        Self::url_from(
-            &PathBuf::from(&mapping.get(&from_id).unwrap()),
-            &PathBuf::from(item),
-        )
-    }
-
-    fn record_profile(&mut self, p: &SiteProfile) {
-        let profile_id = util::hash(&p.profile.name);
-        self.profiles.insert(profile_id, p.profile.clone());
-
-        for page in &p.pages {
-            let info = page.info();
-            let page_id = page.id();
-            let mut path = PathBuf::new();
-            if self.config.profiles.len() > 1 || self.config.use_subfolder_for_single_profile {
-                path.push(&p.profile.name);
-            }
-            path.push(info.path);
-            path.set_extension("html");
-
-            let url = path.to_str().unwrap();
-            let disk = self.config.output_dir.clone().join(&path);
-            self.page_paths.insert(
-                page_id,
-                SiteMapperPath {
-                    disk,
-                    path: url.to_owned(),
-                },
-            );
-
-            if let Some(pagination) = info.pagination {
-                let group_id = page.group_id();
-                self.page_groups.insert(page_id, group_id);
-                let group = match self.groups.entry(group_id) {
-                    Entry::Occupied(entries) => entries.into_mut(),
-                    Entry::Vacant(v) => v.insert(Vec::new()),
-                };
-
-                group.push((pagination.current_page, page_id));
-            }
-
-            for id in page.entries() {
-                self.entry_pages.insert(id, page_id);
-            }
-
-            for (id, anchor) in page.anchors() {
-                self.entry_anchors.insert(id, anchor);
-            }
-
-            self.page_profiles.insert(page_id, profile_id);
-        }
-    }
-
-    pub fn url_for_entry(&self, from_id: u64, to_id: u64) -> String {
-        let to_path = self
-            .page_paths
-            .get(self.entry_pages.get(&to_id).unwrap())
-            .unwrap();
-
-        let url = match &self.config.url_scheme {
-            UrlScheme::Relative => {
-                let from_path = self
-                    .page_paths
-                    .get(self.entry_pages.get(&from_id).unwrap())
-                    .unwrap();
-                // diff the two paths to generate a relative URL
-                let to_path = PathBuf::from(&to_path.path);
-                Self::url_from(&PathBuf::from(&from_path.path), &to_path)
-            }
-            UrlScheme::Absolute { base_url } => format!("{}{}", &base_url, &to_path.path),
-        };
-
-        match self.entry_anchors.get(&to_id) {
-            Some(anchor) => format!("{}#{}", url, anchor),
-            None => url,
-        }
-    }
-
-    fn url_from(source: &Path, dest: &Path) -> String {
-        let filename = dest.file_name().unwrap();
-        let source = source.parent().unwrap();
-        let dest = dest.parent().unwrap();
-        let diff = pathdiff::diff_paths(dest, source).unwrap().join(filename);
-        diff.to_str().unwrap().replace("\\", "/")
     }
 }
 
@@ -223,13 +66,7 @@ impl<'config> SiteGenerator<'config> {
     }
 
     pub fn generate<'t>(&self, theme: &'t dyn Theme<'t>) -> Result<()> {
-        let mapping: HashMap<u64, String> = self
-            .mapper
-            .borrow()
-            .page_paths
-            .iter()
-            .map(|(p, path)| (*p, path.path.clone()))
-            .collect();
+        let mapping: HashMap<u64, String> = self.mapper.borrow().page_path_mapping();
 
         let mut handlebars = Handlebars::new();
 
@@ -251,9 +88,17 @@ impl<'config> SiteGenerator<'config> {
                 groups_to_pages: self.mapper.borrow().groups.clone(),
             }),
         );
+        handlebars.register_helper(
+            "site_map",
+            Box::new(SiteMapHelper {
+                mapping: mapping.clone(),
+            }),
+        );
         handlebars.register_helper("breadcrumbs", Box::new(BreadcrumbsHelper { mapping }));
         handlebars.register_helper("pagination", Box::new(PaginationHelper));
         handlebars.register_helper("columns", Box::new(ColumnsHelper));
+
+        handlebars_misc_helpers::register(&mut handlebars);
 
         let templates: Vec<Template> = self
             .profiles
@@ -276,11 +121,15 @@ impl<'config> SiteGenerator<'config> {
             data: Value,
             breadcrumbs: Breadcrumbs,
             page_id: u64,
+            site_map: SiteMap,
+            doc_info: DocInfo,
         }
 
         let context = PageContext::new(self.mapper.clone());
 
         for p in &self.profiles {
+            let site_map = SiteMap::from_pages(&p);
+
             for page in &p.pages {
                 let info = page.info();
                 let title = format!("{} | {}", &info.title, &p.profile.title);
@@ -291,6 +140,8 @@ impl<'config> SiteGenerator<'config> {
                     page_id: page.id(),
                     data: page.data(&context),
                     breadcrumbs: Breadcrumbs::from_page(page.as_ref(), p),
+                    site_map: site_map.clone(),
+                    doc_info: p.dossier.info.clone(),
                 };
 
                 let rendered = handlebars.render(info.template.into(), &data)?;

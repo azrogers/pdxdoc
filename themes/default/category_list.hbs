@@ -1,21 +1,30 @@
 {{#> layout}}
 	{{{ body }}}
 
+	<div class="pd-entries">
 	{{#each entries}}
+		<a class="pd-anchor" name="{{ anchor }}"></a>
 		<div class="pd-entry">
-			<a name="{{ anchor }}"><h3 class="pd-entry-title">{{ name }}</h3></a>
-			{{#if body}}<div class="pd-entry-body">{{{ body }}}</div>{{/if}}
-			<table>
+			<h3 class="pd-entry-title">{{ name }}</h3>
+			{{#if body}}
+				<div class="pd-entry-body">{{{ body }}}</div>
+			{{else}}
+				<div class="pd-entry-none"><em>No additional information available.</em></div>
+			{{/if}}
+			<div class="pd-entry-properties">
 				{{#each properties }}
-				<tr>
-					<td>{{ name }}</td>
-					<td>{{{ value }}}</td>
-				</tr>
+					{{#if value}}
+						<div class="pd-entry-property">
+							<div class="pd-entry-property-name">{{ name }}</div>
+							<div class="pd-entry-property-value">{{{ value }}}</div>
+						</div>
+					{{/if}}
 				{{/each}}
-			</table>
+			</div>
 			{{#with cross_refs}}
 				<div class="pd-entry-cross-refs">
 					{{#each groups}}
+					<div class="pd-cross-ref-group">
 						<h4 class="pd-cross-ref-source">{{name}}</h4>
 						{{#each properties}}
 							<h5 class="pd-cross-ref-name">{{ name }}</h5>
@@ -31,11 +40,13 @@
 								{{/columns}}
 							</div>
 						{{/each}}
+					</div>
 					{{/each}}
 				</div>
 			{{/with}}
 		</div>
 	{{/each}}
+	</div>
 
 	{{> pagination}}
 {{/layout}}

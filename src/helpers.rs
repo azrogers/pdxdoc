@@ -9,11 +9,12 @@ use handlebars::{
     PathAndJson, RenderContext, RenderErrorReason, Renderable, Template,
 };
 use itertools::Itertools;
+use log::{info, trace};
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::{
-    generator::SiteMapper,
+    mapper::{SiteMap, SiteMapper},
     page::{Breadcrumb, Breadcrumbs},
 };
 
@@ -372,6 +373,110 @@ impl HelperDef for BreadcrumbsHelper {
 
             rc.pop_block();
         }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct SiteMapHelper {
+    pub mapping: HashMap<u64, String>,
+}
+
+impl<'reg: 'rc, 'rc> SiteMapHelper {
+    fn recurse_sitemap(
+        &self,
+        param: &PathAndJson<'rc>,
+        sitemap: &SiteMap,
+        depth: usize,
+        page_id: u64,
+        h: &Helper<'rc>,
+        hb: &'reg Handlebars<'reg>,
+        context: &'rc Context,
+        rc: &mut RenderContext<'reg, 'rc>,
+        out: &mut dyn Output,
+    ) -> HelperResult {
+        let mut block = create_block(param);
+        let mut params = BlockParams::new();
+
+        params.add_value("depth", serde_json::to_value(depth).unwrap())?;
+        params.add_value("title", Value::String(sitemap.title.clone()))?;
+        params.add_value(
+            "url",
+            Value::String(SiteMapper::url_with_mapping(
+                &self.mapping,
+                page_id,
+                &sitemap.absolute_url,
+            )),
+        )?;
+        params.add_value(
+            "has_children",
+            Value::Bool(matches!(&sitemap.children, v if !v.is_empty())),
+        )?;
+        params.add_value(
+            "is_current",
+            Value::Bool(sitemap.page_ids.contains(&page_id)),
+        )?;
+
+        block.set_block_params(params);
+        rc.push_block(block);
+
+        match &sitemap.page {
+            Some(pagination) if pagination.current_page > 1 => (),
+            _ => {
+                if let Some(t) = h.template() {
+                    t.render(hb, context, rc, out)?;
+                };
+            }
+        }
+
+        rc.pop_block();
+
+        let mut children = sitemap.children.values().collect_vec();
+        children.sort_by_key(|c| c.borrow().title.clone());
+        for m in children {
+            self.recurse_sitemap(
+                param,
+                &m.borrow(),
+                depth + 1,
+                page_id,
+                h,
+                hb,
+                context,
+                rc,
+                out,
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+impl HelperDef for SiteMapHelper {
+    fn call<'reg: 'rc, 'rc>(
+        &self,
+        h: &Helper<'rc>,
+        hb: &'reg Handlebars<'reg>,
+        context: &'rc Context,
+        rc: &mut RenderContext<'reg, 'rc>,
+        out: &mut dyn Output,
+    ) -> HelperResult {
+        let param = h
+            .param(0)
+            .ok_or(RenderErrorReason::ParamNotFoundForIndex("sitemap", 0))?;
+
+        let sitemap = serde_json::from_value::<SiteMap>(param.value().clone()).map_err(|_| {
+            RenderErrorReason::ParamTypeMismatchForName("sitemap", "0".into(), "SiteMap".into())
+        })?;
+
+        let page_id = context
+            .data()
+            .as_object()
+            .and_then(|o| o.get("page_id"))
+            .and_then(|v| v.as_u64())
+            .ok_or(RenderErrorReason::MissingVariable(Some("page_id".into())))?;
+
+        self.recurse_sitemap(param, &sitemap.clone(), 0, page_id, h, hb, context, rc, out)?;
 
         Ok(())
     }
