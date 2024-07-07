@@ -1,21 +1,104 @@
-use std::{cell::RefCell, collections::HashMap, hash::Hash, marker::PhantomData, rc::Rc};
+use std::{
+    cell::RefCell, collections::HashMap, hash::Hash, marker::PhantomData, path::PathBuf, rc::Rc,
+};
 
 use clauser::data::script_doc_parser::{
     doc_string::{DocString, DocStringSegment},
     ScriptDocContent, ScriptDocEntry,
 };
 use itertools::Itertools;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{value::RawValue, Value};
 
 use crate::{
     config::Config,
     dossier::{CollatedCrossReferences, DocCategory, Dossier},
     entry::{DocEntry, EmptyDocEntry},
-    generator::SiteMapper,
+    generator::{SiteMapper, SiteProfile},
     theme::Template,
     util::{self, paginate, DocStringSer},
 };
+
+#[derive(Deserialize, Serialize, Clone)]
+pub enum Breadcrumb {
+    Single {
+        title: String,
+        absolute_url: String,
+    },
+    Paged {
+        title: String,
+        root_url: String,
+        page: PaginationInfo,
+    },
+}
+
+#[derive(Deserialize, Serialize, Default, Clone)]
+pub struct Breadcrumbs {
+    crumbs: Vec<Breadcrumb>,
+}
+
+impl Breadcrumbs {
+    pub fn new(crumbs: Vec<Breadcrumb>) -> Breadcrumbs {
+        Breadcrumbs { crumbs }
+    }
+
+    /// Creates a new set of breadcrumbs from a page and its parents.
+    pub fn from_page(page: &dyn Page, profile: &SiteProfile) -> Breadcrumbs {
+        let mut crumbs = vec![Breadcrumb::Single {
+            title: profile.profile.title.clone(),
+            absolute_url: "index".into(),
+        }];
+
+        crumbs.extend(Self::from_page_inner(page, profile).crumbs);
+        Breadcrumbs { crumbs }
+    }
+
+    fn from_page_inner(page: &dyn Page, profile: &SiteProfile) -> Breadcrumbs {
+        let mut crumbs = Vec::new();
+
+        // get parent crumbs if we have them
+        if let Some(parent_id) = page.parent_id() {
+            let parent = profile.pages.iter().find(|p| p.id() == parent_id).unwrap();
+            crumbs.extend(Self::from_page_inner(parent.as_ref(), profile).crumbs);
+        }
+
+        let page_info = page.info();
+        let crumb = match page_info.pagination {
+            Some(pagination) if pagination.total_pages > 1 => Breadcrumb::Paged {
+                title: page_info.title.clone(),
+                root_url: Self::ensure_html_on_url(&page.page_url(1)),
+                page: pagination.clone(),
+            },
+            _ => Breadcrumb::Single {
+                title: page_info.title.clone(),
+                absolute_url: Self::ensure_html_on_url(&page_info.path),
+            },
+        };
+
+        crumbs.push(crumb);
+        Breadcrumbs::new(crumbs)
+    }
+
+    pub fn len(&self) -> usize {
+        self.crumbs.len()
+    }
+
+    fn ensure_html_on_url(str: &str) -> String {
+        let mut path = PathBuf::from(str);
+        path.set_extension("html");
+        path.to_str().unwrap().to_string()
+    }
+}
+
+impl IntoIterator for Breadcrumbs {
+    type Item = (usize, Breadcrumb);
+
+    type IntoIter = std::iter::Enumerate<std::vec::IntoIter<Breadcrumb>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.crumbs.into_iter().enumerate().into_iter()
+    }
+}
 
 pub struct PageContext {
     mapper: Rc<RefCell<SiteMapper>>,
@@ -33,7 +116,7 @@ impl PageContext {
     }
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct PaginationInfo {
     pub current_page: usize,
     pub total_pages: usize,
@@ -63,7 +146,8 @@ pub trait Page {
     fn group_id(&self) -> u64;
     fn info(&self) -> PageInfo;
     fn entries(&self) -> Vec<u64>;
-    fn body(&self) -> DocString;
+    fn page_url(&self, page: usize) -> String;
+    fn parent_id(&self) -> Option<u64>;
     /// All of the anchors (destinations that can be reached with the URL hash) on this page, and their entry ID.
     fn anchors(&self) -> Vec<(u64, String)>;
     fn data(&self, context: &PageContext) -> serde_json::Value;
@@ -112,14 +196,10 @@ impl Page for CategoryListPage {
             template: Template::CategoryList,
             path: match self.page.total_pages {
                 1 => self.category.name.clone(),
-                _ => format!("{}_p{}", self.category.name, self.page.current_page),
+                _ => Self::page_url(&self, self.page.current_page),
             },
             pagination: Some(self.page.clone()),
         }
-    }
-
-    fn body(&self) -> DocString {
-        DocString::new_text("todo", None)
     }
 
     fn entries(&self) -> Vec<u64> {
@@ -202,6 +282,14 @@ impl Page for CategoryListPage {
     fn group_id(&self) -> u64 {
         util::hash(&self.category.name)
     }
+
+    fn parent_id(&self) -> Option<u64> {
+        None
+    }
+
+    fn page_url(&self, page: usize) -> String {
+        format!("{}_p{}", self.category.name, page)
+    }
 }
 
 pub struct GenericListPageBuilder<P: Page + GenericListPage> {
@@ -269,6 +357,7 @@ pub struct IndexPage {
     title: String,
     path: String,
     entries: Vec<u64>,
+    parent_id: Option<u64>,
 }
 
 impl Page for IndexPage {
@@ -291,10 +380,6 @@ impl Page for IndexPage {
 
     fn entries(&self) -> Vec<u64> {
         vec![]
-    }
-
-    fn body(&self) -> DocString {
-        DocString::new_text("todo", None)
     }
 
     fn anchors(&self) -> Vec<(u64, String)> {
@@ -324,6 +409,14 @@ impl Page for IndexPage {
         }
 
         serde_json::to_value(Data { items }).unwrap()
+    }
+
+    fn parent_id(&self) -> Option<u64> {
+        self.parent_id.clone()
+    }
+
+    fn page_url(&self, page: usize) -> String {
+        self.path.clone()
     }
 }
 
@@ -359,6 +452,7 @@ impl GenericListPage for ScopePage {
             title: "Scopes".into(),
             path: "scopes/index.html".into(),
             entries: entries.iter().map(|(id, _)| *id).collect_vec(),
+            parent_id: None,
         }))
     }
 }
@@ -381,10 +475,6 @@ impl Page for ScopePage {
         vec![self.entry_id]
     }
 
-    fn body(&self) -> DocString {
-        DocString::new_text("todo", None)
-    }
-
     fn anchors(&self) -> Vec<(u64, String)> {
         vec![]
     }
@@ -403,6 +493,14 @@ impl Page for ScopePage {
 
     fn group_id(&self) -> u64 {
         Self::category_id()
+    }
+
+    fn parent_id(&self) -> Option<u64> {
+        Some(util::hash(&"SCOPES_INDEX"))
+    }
+
+    fn page_url(&self, _page: usize) -> String {
+        format!("scopes/{}", self.name)
     }
 }
 
@@ -454,6 +552,7 @@ impl GenericListPage for MaskPage {
             title: "Modifiers".into(),
             path: "modifiers/index.html".into(),
             entries: entries.iter().map(|(id, _)| *id).collect_vec(),
+            parent_id: None,
         }))
     }
 }
@@ -468,7 +567,7 @@ impl Page for MaskPage {
             title: format!("Modifiers for Mask: {}", self.name),
             path: match self.page.total_pages {
                 1 => format!("modifiers/{}", self.name),
-                _ => format!("modifiers/{}_p{}", self.name, self.page.current_page),
+                _ => Self::page_url(&self, self.page.current_page),
             },
             template: Template::Mask,
             pagination: Some(self.page.clone()),
@@ -482,10 +581,6 @@ impl Page for MaskPage {
         }
 
         modifiers
-    }
-
-    fn body(&self) -> DocString {
-        DocString::new_text("todo", None)
     }
 
     fn anchors(&self) -> Vec<(u64, String)> {
@@ -542,5 +637,13 @@ impl Page for MaskPage {
 
     fn group_id(&self) -> u64 {
         util::hash(&format!("modifiers_{}", self.name))
+    }
+
+    fn parent_id(&self) -> Option<u64> {
+        Some(util::hash(&"MODIFIERS_INDEX"))
+    }
+
+    fn page_url(&self, page: usize) -> String {
+        format!("modifiers/{}_p{}", self.name, page)
     }
 }

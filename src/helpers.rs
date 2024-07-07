@@ -1,12 +1,21 @@
-use std::collections::HashMap;
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use handlebars::{
-    BlockParams, Context, Handlebars, Helper, HelperDef, HelperResult, Output, PathAndJson,
-    RenderContext, RenderErrorReason, Renderable,
+    handlebars_helper, BlockParams, Context, Handlebars, Helper, HelperDef, HelperResult, Output,
+    PathAndJson, RenderContext, RenderErrorReason, Renderable, Template,
 };
 use itertools::Itertools;
+use serde::Serialize;
+use serde_json::Value;
 
-use crate::generator::SiteMapper;
+use crate::{
+    generator::SiteMapper,
+    page::{Breadcrumb, Breadcrumbs},
+};
 
 use handlebars::BlockContext;
 
@@ -256,6 +265,105 @@ impl HelperDef for ColumnsHelper {
 
             block.set_block_params(params);
 
+            rc.push_block(block);
+
+            if let Some(t) = h.template() {
+                t.render(hb, context, rc, out)?;
+            };
+
+            rc.pop_block();
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct BreadcrumbsHelper {
+    pub mapping: HashMap<u64, String>,
+}
+
+impl HelperDef for BreadcrumbsHelper {
+    fn call<'reg: 'rc, 'rc>(
+        &self,
+        h: &Helper<'rc>,
+        hb: &'reg Handlebars<'reg>,
+        context: &'rc Context,
+        rc: &mut RenderContext<'reg, 'rc>,
+        out: &mut dyn Output,
+    ) -> HelperResult {
+        let param = h
+            .param(0)
+            .ok_or(RenderErrorReason::ParamNotFoundForIndex("breadcrumbs", 0))?;
+
+        let crumbs =
+            serde_json::from_value::<Breadcrumbs>(param.value().clone()).map_err(|_| {
+                RenderErrorReason::ParamTypeMismatchForName(
+                    "breadcrumbs",
+                    "0".into(),
+                    "Breadcrumbs".into(),
+                )
+            })?;
+
+        let page_id = context
+            .data()
+            .as_object()
+            .and_then(|o| o.get("page_id"))
+            .and_then(|v| v.as_u64())
+            .ok_or(RenderErrorReason::MissingVariable(Some("page_id".into())))?;
+
+        let len = crumbs.len();
+        for (i, crumb) in crumbs.into_iter() {
+            let mut block = create_block(param);
+            let mut params = BlockParams::new();
+
+            params.add_value("is_first", Value::Bool(matches!(i, _ if i == 0)))?;
+            params.add_value("is_last", Value::Bool(matches!(i, _ if i == len - 1)))?;
+
+            // add params from crumb
+            match crumb {
+                Breadcrumb::Single {
+                    title,
+                    absolute_url,
+                } => {
+                    params.add_value("is_paged", Value::Bool(false))?;
+                    params.add_value("title", Value::String(title.clone()))?;
+                    params.add_value(
+                        "url",
+                        Value::String(SiteMapper::url_with_mapping(
+                            &self.mapping,
+                            page_id,
+                            &absolute_url,
+                        )),
+                    )
+                }
+                Breadcrumb::Paged {
+                    title,
+                    root_url,
+                    page,
+                } => {
+                    params.add_value("is_paged", Value::Bool(true))?;
+                    params.add_value("title", Value::String(title.clone()))?;
+                    params.add_value(
+                        "current_page",
+                        serde_json::to_value(page.current_page).unwrap(),
+                    )?;
+                    params.add_value(
+                        "total_pages",
+                        serde_json::to_value(page.total_pages).unwrap(),
+                    )?;
+                    params.add_value(
+                        "url",
+                        Value::String(SiteMapper::url_with_mapping(
+                            &self.mapping,
+                            page_id,
+                            &root_url,
+                        )),
+                    )
+                }
+            }?;
+
+            block.set_block_params(params);
             rc.push_block(block);
 
             if let Some(t) = h.template() {

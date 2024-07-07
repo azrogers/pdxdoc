@@ -16,16 +16,16 @@ use serde_json::Value;
 use crate::{
     config::{Config, Profile, UrlScheme},
     dossier::Dossier,
-    helpers::{AssetHelper, ColumnsHelper, PageUrlHelper, PaginationHelper},
-    page::{Page, PageContext},
+    helpers::{AssetHelper, BreadcrumbsHelper, ColumnsHelper, PageUrlHelper, PaginationHelper},
+    page::{Breadcrumbs, Page, PageContext},
     theme::{Template, Theme},
     util,
 };
 
-struct SiteProfile {
-    profile: Profile,
-    dossier: Rc<Dossier>,
-    pages: Vec<Box<dyn Page>>,
+pub struct SiteProfile {
+    pub profile: Profile,
+    pub dossier: Rc<Dossier>,
+    pub pages: Vec<Box<dyn Page>>,
 }
 
 impl SiteProfile {
@@ -243,16 +243,17 @@ impl<'config> SiteGenerator<'config> {
                 mapper: mapping.clone(),
             }),
         );
-        handlebars.register_helper("pagination", Box::new(PaginationHelper));
-        handlebars.register_helper("columns", Box::new(ColumnsHelper));
         handlebars.register_helper(
             "page_url",
             Box::new(PageUrlHelper {
-                mapping,
+                mapping: mapping.clone(),
                 page_to_groups: self.mapper.borrow().page_groups.clone(),
                 groups_to_pages: self.mapper.borrow().groups.clone(),
             }),
         );
+        handlebars.register_helper("breadcrumbs", Box::new(BreadcrumbsHelper { mapping }));
+        handlebars.register_helper("pagination", Box::new(PaginationHelper));
+        handlebars.register_helper("columns", Box::new(ColumnsHelper));
 
         let templates: Vec<Template> = self
             .profiles
@@ -273,6 +274,7 @@ impl<'config> SiteGenerator<'config> {
             title: String,
             name: String,
             data: Value,
+            breadcrumbs: Breadcrumbs,
             page_id: u64,
         }
 
@@ -288,6 +290,7 @@ impl<'config> SiteGenerator<'config> {
                     name,
                     page_id: page.id(),
                     data: page.data(&context),
+                    breadcrumbs: Breadcrumbs::from_page(page.as_ref(), p),
                 };
 
                 let rendered = handlebars.render(info.template.into(), &data)?;
